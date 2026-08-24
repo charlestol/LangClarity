@@ -1,0 +1,121 @@
+{
+  "name": "langclarity",
+  "displayName": "LangClarity",
+  "description": "Persistent, bidirectional English interpretations of source code",
+  "version": "0.0.1",
+  "publisher": "langclarity",
+  "license": "MIT",
+  "preview": true,
+  "homepage": "https://github.com/charlestol/LangClarity",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/charlestol/LangClarity.git"
+  },
+  "keywords": [
+    "codex",
+    "code explanation",
+    "natural language programming",
+    "typescript",
+    "javascript"
+  ],
+  "engines": {
+    "vscode": "^1.134.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "LangClarity sends explicitly requested source and English to Codex/OpenAI, so the workspace must be trusted."
+    }
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:langclarity.openEnglishView",
+    "onCommand:langclarity.interpretFile",
+    "onCommand:langclarity.englishToCode",
+    "onCommand:langclarity.codeToEnglish",
+    "onCommand:langclarity.selectModel",
+    "workspaceContains:**/.langclarity/**/*.md"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "langclarity.openEnglishView",
+        "title": "Open English View",
+        "category": "LangClarity"
+      },
+      {
+        "command": "langclarity.interpretFile",
+        "title": "Interpret File",
+        "category": "LangClarity"
+      },
+      {
+        "command": "langclarity.englishToCode",
+        "title": "English → Code",
+        "category": "LangClarity"
+      },
+      {
+        "command": "langclarity.codeToEnglish",
+        "title": "Code → English",
+        "category": "LangClarity"
+      },
+      {
+        "command": "langclarity.selectModel",
+        "title": "Select Codex Model and Reasoning",
+        "category": "LangClarity"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "langclarity.openEnglishView",
+          "when": "editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact"
+        },
+        {
+          "command": "langclarity.interpretFile",
+          "when": "false"
+        },
+        {
+          "command": "langclarity.englishToCode",
+          "when": "editorLangId == markdown"
+        },
+        {
+          "command": "langclarity.codeToEnglish",
+          "when": "editorLangId == markdown || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact"
+        },
+        {
+          "command": "langclarity.selectModel",
+          "when": "editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "package:vsix": "vsce package"
+  },
+  "dependencies": {
+    "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "@types/vscode": "^1.134.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
+    "@vscode/vsce": "^3.9.2",
+    "eslint": "^10.5.0",
+    "typescript-eslint": "^8.61.1"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  }
+}
