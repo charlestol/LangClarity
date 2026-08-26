@@ -1,117 +1,79 @@
 # LangClarity
 
-LangClarity is a preview VS Code extension that gives a TypeScript or JavaScript file a persistent, editable structured-English representation. Code and English remain ordinary workspace files, and synchronization happens only when you explicitly choose a direction.
+LangClarity is a preview VS Code extension that gives TypeScript and JavaScript files a persistent, editable structured-English representation. Code and English are ordinary workspace files; synchronization runs only when you choose a direction.
 
-## What it does
+## Features
 
-- Interprets `.ts`, `.tsx`, `.js`, and `.jsx` files into structured Markdown.
-- Stores English at `.langclarity/<source-path-and-extension>.md`.
-- Renaming or moving a source keeps its English under `.langclarity/`; deleting a source orphans the English to `.langclarity/.orphaned/`.
-- Opens a focused interpretation pane with editable English Code and read-only supporting context.
-- Detects whether code, English, or both changed since the last successful synchronization.
-- Refreshes English from code only on **Code → English**.
-- Proposes code from edited English on **English → Code**, shows the exact VS Code diff, validates syntax, and waits for explicit approval.
-- Preserves both current files when a request fails or is cancelled.
+- Interprets `.ts`, `.tsx`, `.js`, and `.jsx` into structured Markdown at `.langclarity/<source-path>.md`.
+- Keeps English paired on rename/move; orphans deleted sources to `.langclarity/.orphaned/`.
+- Opens an interpretation pane with editable English Code and read-only summaries.
+- Detects whether code, English, or both changed since the last sync.
+- **Code → English** refreshes English from code.
+- **English → Code** proposes code from edited English, shows the diff, validates syntax, and waits for approval.
+- Preserves both files when a request fails or is cancelled.
 
-LangClarity does not automatically merge independently changed code and English. When both changed, choose which side is authoritative.
+When both sides changed independently, pick which is authoritative—LangClarity does not auto-merge.
 
 ## Requirements
 
-- VS Code 1.134.0 or newer.
-- A trusted workspace containing a saved, supported source file.
-- Codex 0.148.0-alpha.15 or newer.
-- Codex signed in with ChatGPT. Run `codex login` and complete the browser flow if needed.
+- VS Code 1.134.0+
+- Trusted workspace with a saved supported source file
+- Codex 0.148.0-alpha.15+ signed in via ChatGPT (`codex login`)
 
-The MVP is verified on macOS. It uses the Codex executable bundled with `/Applications/ChatGPT.app` when present; otherwise `codex` must be available on the extension host's `PATH`. Windows and Linux are not yet release-certified.
+Verified on macOS (uses ChatGPT.app's bundled Codex when present, otherwise `codex` on `PATH`). Windows and Linux are not yet release-certified.
 
-## Quick start
+## Getting started
 
-1. Open a project folder in VS Code.
-2. Open a supported TypeScript or JavaScript source file.
-3. Right-click the source in the editor or Explorer and open the **LangClarity** submenu. You can also use the Command Palette with `Cmd+Shift+P` on macOS or `Ctrl+Shift+P` on Windows/Linux.
-4. Run **LangClarity: Interpret File**. That creates the English pair and opens the interpretation pane. Later, reopen with **LangClarity: Open Interpretation**.
-5. Review the provider disclosure, then continue.
+1. Open a trusted workspace and a saved `.ts`, `.tsx`, `.js`, or `.jsx` file.
+2. **Right-click** the source in the editor or Explorer → **LangClarity**.
+3. Choose **Interpret File** to create the English pair and open the interpretation pane. If a pair already exists, choose **Open Interpretation** instead.
+4. Review the provider disclosure on first use, then edit English or sync.
 
-The source and LangClarity interpretation pane open side by side. Every tab uses the pane's full width, grows with its content, and relies on pane-level vertical scrolling. English Code is one editable, editor-like text surface with a left gutter containing every source line number; long individual rows retain horizontal editor scrolling. When synchronized, source line N and English row N are an exact pair, so both sides have the same number of logical lines. Generated English Code uses the shortest clear everyday wording, normally one clause per row. Parent rows and indentation carry context so child rows do not repeat subjects or identifiers. Readable fragments are allowed, while visible literal values remain verbatim and unavoidable technical terms are explained. Blank source lines produce blank English rows; no generated row summarizes, reorders, or absorbs another source line. Enter inserts an English row and shifts the current and following content and gutter positions down like a source-line insertion. The editor supports native selection, undo/redo, copy/paste and find behavior, two-space Tab/Shift+Tab indentation, clickable line numbers, active-line highlighting, save shortcuts, and line/column status. Overview, Structure, and Effects provide higher-level read-only summaries. Edits update the backing Markdown text document and participate in normal save and undo behavior. The pane shows only the synchronization action valid for its current state, or a direction chooser when both representations changed; synchronized or invalid panes show no sync action. Use **Open Markdown** in the pane (Command Palette: **Open Interpretation Markdown**) when you need to inspect or repair the raw file.
+The source and interpretation pane open side by side. **English Code** is editable with source line numbers in a gutter; **Overview**, **Structure**, and **Effects** are read-only summaries. Sync state appears in the pane and status bar.
 
-The source-file context menu and Command Palette hide actions that do not apply to the active file. A source without a paired document offers **Interpret File**; a source with one offers **Open Interpretation** and synchronization actions. Generic Markdown and unsupported files do not expose source synchronization commands. The LangClarity status-bar item reports the current synchronization state and is keyboard-accessible through VS Code's standard status-bar navigation.
+**Right-click → LangClarity** is the main entry point for interpretation, sync, and **Select Codex Model and Reasoning**. When only one sync action applies, the pane also shows a suggested-action button. Click the status bar when it offers a sync command (for example, when both sides changed). **Open Markdown** in the pane opens the raw `.langclarity` file beside the source.
 
-To choose a model, run **LangClarity: Select Codex Model and Reasoning** from a supported source file. The selector contains only visible models returned by your local Codex runtime. The default is the current Codex default; `medium` is recommended for Code → English when the selected model supports it.
+The Command Palette exposes the same commands when they apply to the active file; use it if you prefer keyboard-driven workflows.
 
 ## Synchronization
 
-- **Synced:** edit either representation.
-- **Code changed:** run **LangClarity: Code → English** to replace stale English after a complete validated response.
-- **English changed:** run **LangClarity: English → Code**, review the diff, then choose Apply or Cancel. After approval, LangClarity refreshes the complete interpretation from the proposed source and applies both documents together; every pane tab therefore describes the synchronized code.
-- **Both changed:** activate the status item and choose an authoritative direction. Cancel leaves both files untouched.
-- **Invalid English:** repair the malformed Markdown or restore the last valid file before synchronizing.
+| State | Action |
+| --- | --- |
+| Synced | Edit either side freely |
+| Code changed | **Code → English** (right-click, pane button, or status bar) |
+| English changed | **English → Code** → review diff → Apply or Cancel |
+| Both changed | **Choose Apply Direction…** from the pane or status bar, or pick a direction from the right-click menu |
+| Invalid English | Repair the Markdown file before syncing |
 
-No AI request occurs merely because a source or cached English file is opened. LangClarity does not implement on-save, idle, debounce, or per-keystroke synchronization.
+No AI request runs on open, save, idle, or keystroke.
 
 ## Privacy and storage
 
-Before the first model operation in a workspace, LangClarity discloses that the requested source and English are sent to Codex/OpenAI under the policies for your Codex account. The MVP has no LangClarity backend and does not route source through one.
+Before the first model operation, LangClarity discloses that requested source and English are sent to Codex/OpenAI under your account's policies. There is no LangClarity backend.
 
-LangClarity:
+LangClarity does not store API keys, collect telemetry, or log source, prompts, or full paths. Codex runs in an isolated temp root with tools disabled. Interpretations live as ordinary Markdown in the workspace.
 
-- does not request or store API keys, ChatGPT passwords, authentication cookies, or provider tokens;
-- does not collect product telemetry;
-- does not log source, English, prompts, responses, credentials, or full workspace paths;
-- starts Codex in an isolated temporary runtime root with no approvals, disables known tool surfaces, and aborts if Codex reports a tool item;
-- stores interpretations as ordinary Markdown in the current workspace.
+After the first interpretation, LangClarity can add `/.langclarity/` to `.gitignore`—only if you choose **Add to .gitignore**. Decide with your team whether to commit `.langclarity/` (it may contain source-derived content).
 
-After creating the first interpretation in a workspace folder, LangClarity offers to add `/.langclarity/` to that folder's `.gitignore`. It changes `.gitignore` only when you explicitly choose **Add to .gitignore**. You can also run **LangClarity: Add .langclarity to .gitignore** later. Decide with your team whether `.langclarity/` should be committed, because its Markdown may contain source-derived information.
-
-Codex sign-in and account policy behavior are documented in the [official OpenAI authentication guide](https://learn.chatgpt.com/docs/auth).
+Sign-in details: [OpenAI authentication guide](https://learn.chatgpt.com/docs/auth).
 
 ## MVP limits
 
-- Code → English and English → Code model operations accept source files up to 75 KiB and 2,000 lines.
-- Model operations accept English documents up to 256 KiB where applicable.
-- Existing interpretations remain openable and locally editable even when their source exceeds a model-operation limit.
-- Structured runtime message: at most 2 MiB.
-- Concurrent operations: one per file and two globally.
-- Model turn timeout: three minutes.
+- Source: up to 75 KiB / 2,000 lines per model operation
+- English: up to 256 KiB where applicable
+- Existing pairs remain openable locally even when over limits
+- One operation per file, two globally; 3-minute timeout
 
-Interpretations and code proposals are AI-generated and may be incomplete or incorrect. Review English claims and every proposed code diff. LangClarity guarantees neither semantic equivalence nor logical/type correctness.
-
-Related files list direct workspace imports only (Structure → Related files). Related-test mapping, multi-hop related files, and connected English summaries are not included. Additional language certification, automatic synchronization, and intelligent conflict merging are also not in this MVP.
+AI output may be incomplete or incorrect—review English claims and every proposed diff. Related files lists direct imports only. No auto-sync, conflict merging, or multi-hop related files in this MVP.
 
 ## Troubleshooting
 
-### Codex is not installed
+| Issue | Fix |
+| --- | --- |
+| Codex not installed | Install Codex ≥ 0.148.0-alpha.15; verify with `codex --version` |
+| Sign-in required | Run `codex login`, complete browser flow, retry |
+| LangClarity menu missing | Right-click a saved `.ts`/`.tsx`/`.js`/`.jsx` in the editor or Explorer |
+| Status stale | Right-click the source → **LangClarity** → **Open Interpretation** |
+| Proposal blocked | Fix syntax errors, or **Apply Anyway** for other diagnostics; regenerate if files changed since proposal |
 
-Install or update Codex, then confirm that `codex --version` reports 0.148.0-alpha.15 or newer. On macOS, LangClarity also checks the Codex executable bundled with the ChatGPT desktop app.
-
-### Sign-in is required
-
-Run `codex login`, complete the browser flow, and retry the LangClarity action. LangClarity's MVP requires ChatGPT sign-in and does not ask for an API key.
-
-### The command is not visible
-
-Open or right-click a saved `.ts`, `.tsx`, `.js`, or `.jsx` file inside the current workspace. Supported source files expose a **LangClarity** context submenu. The Command Palette exposes **Interpret File** when there is no pair, **Open Interpretation** and sync commands when there is a pair, model selection from a supported source, and **Add .langclarity to .gitignore**.
-
-### The status does not update
-
-Make sure the source/English pair has been opened through **LangClarity: Open Interpretation**. Open-document edits are detected immediately; external changes are detected after the filesystem write is observed.
-
-### A proposal cannot be applied
-
-Syntax errors block application. Other VS Code diagnostics require **Apply Anyway**. If code or English changed after proposal generation, generate a fresh proposal.
-
-Use **View: Toggle Output** and select **LangClarity** for redacted operation categories. Logs intentionally exclude source and prompt content.
-
-## Development
-
-Run `npm install`, then `npm test`.
-
-Interpretation-fidelity corpus (12 fixtures, held-out split, deterministic claim scoring): see `benchmarks/fidelity/README.md`. List fixtures with `npm run corpus:fidelity`. Live Codex runs: `LANGCLARITY_FIDELITY_TEST=1 npm run benchmark:fidelity`.
-
-To launch the Extension Development Host without F5:
-
-1. Open this repository folder in VS Code.
-2. Open **Run and Debug**.
-3. Select **Run Extension**.
-4. Use the play button, or run **Debug: Start Debugging** from the Command Palette.
-
-The `code` shell command is not required. To create an installable VSIX, run `npm run package:vsix`; then use **Extensions → Views and More Actions → Install from VSIX…**.
+Output: **View: Toggle Output** → **LangClarity** (redacted categories only).

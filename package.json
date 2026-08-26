@@ -1,7 +1,7 @@
 {
   "name": "langclarity",
   "displayName": "LangClarity",
-  "description": "Persistent, bidirectional English interpretations of source code",
+  "description": "Editable structured-English interpretations for TypeScript and JavaScript. Explicit bidirectional sync via Codex with diff review.",
   "version": "0.0.1",
   "publisher": "langclarity",
   "license": "MIT",
@@ -16,7 +16,10 @@
     "code explanation",
     "natural language programming",
     "typescript",
-    "javascript"
+    "javascript",
+    "react",
+    "markdown",
+    "sync"
   ],
   "engines": {
     "vscode": "^1.134.0"
