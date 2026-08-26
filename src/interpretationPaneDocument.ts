@@ -1,4 +1,5 @@
-import { parseEnglishDocument } from './englishDocument';
+import { parseEnglishDocument, type ParsedEnglishDocument } from './englishDocument';
+import { escapeMarkdown, unescapeMarkdown } from './markdownText';
 
 const generatedStart = '<!-- langclarity:generated:start relationships -->';
 
@@ -21,8 +22,10 @@ export interface InterpretationPaneContent {
 	effects: Array<{ heading: string; content: string }>;
 }
 
-export function interpretationPaneContent(markdown: string): InterpretationPaneContent {
-	const parsed = parseEnglishDocument(markdown);
+export function interpretationPaneContent(
+	input: string | ParsedEnglishDocument,
+): InterpretationPaneContent {
+	const parsed = typeof input === 'string' ? parseEnglishDocument(input) : input;
 	return {
 		source: parsed.frontmatter.source,
 		model: parsed.frontmatter.model,
@@ -49,7 +52,6 @@ export function interpretationPaneContent(markdown: string): InterpretationPaneC
 }
 
 export function replacePaneBehavior(markdown: string, items: PaneBehaviorItem[]): string {
-	parseEnglishDocument(markdown);
 	const heading = /^## Behavior\r?$/mu.exec(markdown);
 	const generatedIndex = markdown.indexOf(generatedStart, (heading?.index ?? 0) + (heading?.[0].length ?? 0));
 	if (!heading || generatedIndex < 0) {
@@ -169,23 +171,4 @@ function section(body: string, startHeading: string, endHeading: string): string
 		throw new Error(`The English document is missing ${startHeading}.`);
 	}
 	return body.slice(startIndex + startHeading.length, endIndex).trim();
-}
-
-function escapeMarkdown(value: string): string {
-	return value
-		.replaceAll('\\', '\\\\')
-		.replaceAll('&', '&amp;')
-		.replaceAll('`', '\\`')
-		.replaceAll('[', '\\[')
-		.replaceAll(']', '\\]')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;');
-}
-
-function unescapeMarkdown(value: string): string {
-	return value
-		.replaceAll('&lt;', '<')
-		.replaceAll('&gt;', '>')
-		.replaceAll('&amp;', '&')
-		.replace(/\\([\\`\[\]])/gu, '$1');
 }

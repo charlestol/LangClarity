@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { deriveSyncState, parseEnglishDocument } from './englishDocument';
+import {
+	deriveSyncState,
+	parseEnglishDocument,
+	type ParsedEnglishDocument,
+} from './englishDocument';
 import { hashText, MAX_SOURCE_LINES } from './interpretation';
 import {
 	behaviorRowsForSource,
@@ -10,6 +14,11 @@ import {
 } from './interpretationPaneDocument';
 
 export const interpretationViewType = 'langclarity.interpretationView';
+const allowedSyncCommands = new Set([
+	'langclarity.codeToEnglish',
+	'langclarity.englishToCode',
+	'langclarity.chooseSyncDirection',
+]);
 
 type PaneMessage =
 	| { type: 'ready' }
@@ -18,11 +27,18 @@ type PaneMessage =
 	| { type: 'command'; command: unknown; behavior: unknown };
 
 export class InterpretationViewProvider implements vscode.CustomTextEditorProvider {
-	constructor(private readonly sourceUriForEnglish: (document: vscode.TextDocument) => vscode.Uri) {}
+	constructor(
+		private readonly extensionUri: vscode.Uri,
+		private readonly sourceUriForEnglish: (document: vscode.TextDocument) => vscode.Uri,
+	) {}
 
 	resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): void {
-		panel.webview.options = { enableScripts: true };
-		panel.webview.html = paneHtml(panel.webview);
+		const mediaRoot = vscode.Uri.joinPath(this.extensionUri, 'media');
+		panel.webview.options = { enableScripts: true, localResourceRoots: [mediaRoot] };
+		panel.webview.html = paneHtml(
+			panel.webview,
+			panel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'interpretationView.css')),
+		);
 		let lastAppliedText: string | undefined;
 		let sourceUri: vscode.Uri | undefined;
 		const resolvedSourceUri = (): vscode.Uri => {
@@ -32,9 +48,10 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 		const currentSourceDocument = async (): Promise<vscode.TextDocument> =>
 			vscode.workspace.openTextDocument(resolvedSourceUri());
 
-		const currentState = async (): Promise<string> => {
-			const parsed = parseEnglishDocument(document.getText());
-			const sourceDocument = await currentSourceDocument();
+		const syncState = (
+			parsed: ParsedEnglishDocument,
+			sourceDocument: vscode.TextDocument,
+		): string => {
 			return deriveSyncState(
 				hashText(sourceDocument.getText()),
 				parsed.frontmatter.sourceHash,
@@ -42,6 +59,10 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 				parsed.frontmatter.editableEnglishHash,
 			);
 		};
+		const currentState = async (): Promise<string> => syncState(
+			parseEnglishDocument(document.getText()),
+			await currentSourceDocument(),
+		);
 
 		const sendState = async (): Promise<void> => {
 			try {
@@ -57,7 +78,8 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 		const sendContent = async (): Promise<void> => {
 			try {
 				const sourceDocument = await currentSourceDocument();
-				const content = interpretationPaneContent(document.getText());
+				const parsed = parseEnglishDocument(document.getText());
+				const content = interpretationPaneContent(parsed);
 				const gridLineCount = Math.max(
 					sourceDocument.lineCount,
 					...content.behavior.map((item) => item.endLine ?? 1),
@@ -67,7 +89,7 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 					content: {
 						...content,
 						behavior: behaviorRowsForSource(content.behavior, gridLineCount),
-						status: await currentState(),
+						status: syncState(parsed, sourceDocument),
 						sourceLineCount: sourceDocument.lineCount,
 					},
 				});
@@ -86,7 +108,7 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 				const updatedText = replacePaneBehavior(currentText, behavior);
 				if (updatedText !== currentText) {
 					const edit = new vscode.WorkspaceEdit();
-					edit.replace(document.uri, fullDocumentRange(document), updatedText);
+					edit.replace(document.uri, fullDocumentRange(document, currentText.length), updatedText);
 					lastAppliedText = updatedText;
 					if (!await vscode.workspace.applyEdit(edit)) {
 						throw new Error('VS Code could not update the interpretation document.');
@@ -130,12 +152,7 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 					if (!await updateBehavior(message.behavior, false)) {
 						return;
 					}
-					const allowedCommands = new Set([
-						'langclarity.codeToEnglish',
-						'langclarity.englishToCode',
-						'langclarity.chooseSyncDirection',
-					]);
-					if (typeof message.command !== 'string' || !allowedCommands.has(message.command)) {
+					if (typeof message.command !== 'string' || !allowedSyncCommands.has(message.command)) {
 						return;
 					}
 					await vscode.commands.executeCommand(message.command, {
@@ -195,80 +212,35 @@ function validBehavior(value: unknown): PaneBehaviorItem[] {
 	if (!Array.isArray(value) || value.length > MAX_SOURCE_LINES) {
 		throw new Error('The Behavior section contains an invalid number of items.');
 	}
-	return value.map((item) => {
-		if (!item || typeof item !== 'object') {
-			throw new Error('The Behavior section contains an invalid item.');
-		}
-		const candidate = item as Record<string, unknown>;
-		if (typeof candidate.statement !== 'string' || candidate.statement.length > 20_000) {
+	return value.map((statement, index) => {
+		if (typeof statement !== 'string' || statement.length > 20_000) {
 			throw new Error('A Behavior statement is invalid or too long.');
 		}
-		if (candidate.evidence !== undefined && typeof candidate.evidence !== 'string') {
-			throw new Error('A Behavior evidence label is invalid.');
-		}
-		if (candidate.evidenceSuffix !== undefined
-			&& (typeof candidate.evidenceSuffix !== 'string'
-				|| !/^_\(\d+–\d+(?:; symbol `(?:[^`]|\\`)+`)?\)_$/u.test(candidate.evidenceSuffix))) {
-			throw new Error('A Behavior source reference is invalid.');
-		}
+		const line = index + 1;
 		return {
-			statement: candidate.statement,
-			...(candidate.evidence ? { evidence: candidate.evidence as string } : {}),
-			...(candidate.evidenceSuffix ? { evidenceSuffix: candidate.evidenceSuffix as string } : {}),
+			statement,
+			evidence: `Line ${line}`,
+			evidenceSuffix: `_(${line}–${line})_`,
+			startLine: line,
+			endLine: line,
 		};
 	});
 }
 
-function fullDocumentRange(document: vscode.TextDocument): vscode.Range {
-	return new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+function fullDocumentRange(document: vscode.TextDocument, textLength: number): vscode.Range {
+	return new vscode.Range(document.positionAt(0), document.positionAt(textLength));
 }
 
-function paneHtml(webview: vscode.Webview): string {
+function paneHtml(webview: vscode.Webview, stylesheetUri: vscode.Uri): string {
 	const nonce = randomBytes(16).toString('base64');
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+	<link rel="stylesheet" href="${stylesheetUri}">
 	<title>LangClarity Interpretation</title>
-	<style>
-		:root { color-scheme: light dark; }
-		body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
-		.header { position: sticky; top: 0; z-index: 2; padding: 18px 22px 12px; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); }
-		.header-row, .actions, .tabs, .behavior-heading { display: flex; align-items: center; gap: 8px; }
-		h1 { flex: 1; margin: 0; font-size: 17px; }
-		.status { padding: 3px 7px; border: 1px solid var(--vscode-panel-border); border-radius: 10px; color: var(--vscode-descriptionForeground); font-size: 11px; }
-		.meta { margin-top: 5px; color: var(--vscode-descriptionForeground); font-size: 12px; }
-		.actions { flex-wrap: wrap; margin-top: 12px; }
-		button { border: 1px solid var(--vscode-button-border, transparent); padding: 5px 10px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); cursor: pointer; }
-		button:hover { background: var(--vscode-button-hoverBackground); }
-		button.secondary { color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); }
-		[hidden] { display: none !important; }
-		.tabs { padding: 0 22px; border-bottom: 1px solid var(--vscode-panel-border); }
-		.tab { padding: 10px 2px 8px; margin-right: 16px; color: var(--vscode-descriptionForeground); background: transparent; border: 0; border-bottom: 2px solid transparent; }
-		.tab.active { color: var(--vscode-foreground); border-bottom-color: var(--vscode-focusBorder); }
-		main { max-width: 920px; padding: 20px 22px 48px; }
-		.panel { display: none; }
-		.panel.active { display: block; }
-		.behavior-heading { justify-content: space-between; margin-bottom: 12px; }
-		h2, h3 { margin: 0; font-size: 15px; }
-		.readonly-section { padding: 14px; margin-bottom: 12px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; background: var(--vscode-editorWidget-background); }
-		.behavior-hint { color: var(--vscode-descriptionForeground); font-size: 12px; }
-		.behavior-editor { display: grid; grid-template-columns: max-content minmax(0, 1fr); height: min(58vh, 620px); min-height: 300px; overflow: hidden; border: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
-		.behavior-gutter { width: 1ch; min-width: 0; overflow: hidden; padding: 8px 7px 8px 2px; color: var(--vscode-editorLineNumber-foreground); background: var(--vscode-editorGutter-background, var(--vscode-editor-background)); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 22px; text-align: right; user-select: none; }
-		.behavior-gutter div { height: 22px; white-space: nowrap; cursor: pointer; }
-		.behavior-gutter .mapped { color: var(--vscode-editorLineNumber-activeForeground); }
-		.behavior-gutter .active { color: var(--vscode-editorLineNumber-activeForeground); font-weight: 600; }
-		#behavior-text { box-sizing: border-box; width: 100%; height: 100%; resize: none; overflow: auto; border: 0; border-left: 1px solid var(--vscode-panel-border); border-radius: 0; padding: 8px 10px; color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 22px; tab-size: 2; white-space: pre; }
-		#behavior-text:focus, button:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-		.editor-status { display: flex; justify-content: flex-end; gap: 16px; padding: 4px 10px; border: 1px solid var(--vscode-panel-border); border-top: 0; color: var(--vscode-descriptionForeground); background: var(--vscode-editorWidget-background); font-family: var(--vscode-editor-font-family); font-size: 11px; }
-		.readonly-section h3 { margin-bottom: 8px; }
-		.readonly-content { white-space: pre-wrap; line-height: 1.55; }
-		.empty { color: var(--vscode-descriptionForeground); font-style: italic; }
-		#error { display: none; margin: 12px 22px 0; padding: 9px 11px; color: var(--vscode-errorForeground); border: 1px solid var(--vscode-inputValidation-errorBorder); background: var(--vscode-inputValidation-errorBackground); }
-		#save-state { color: var(--vscode-descriptionForeground); font-size: 12px; }
-	</style>
 </head>
 <body>
 	<div class="header">
@@ -280,7 +252,7 @@ function paneHtml(webview: vscode.Webview): string {
 			<button class="secondary" data-command="langclarity.openMarkdown">Open Markdown</button>
 		</div>
 	</div>
-	<div id="error" role="alert"></div>
+	<div id="error" role="alert" hidden></div>
 	<nav class="tabs" aria-label="Interpretation sections">
 		<button class="tab active" data-tab="behavior">English Code</button>
 		<button class="tab" data-tab="overview">Overview</button>
@@ -288,7 +260,7 @@ function paneHtml(webview: vscode.Webview): string {
 		<button class="tab" data-tab="effects">Effects</button>
 	</nav>
 	<main>
-		<section class="panel active" id="behavior"><div class="behavior-heading"><h2>English Code</h2><span class="behavior-hint">Everyday English, exactly one row per source line</span></div><div class="behavior-editor"><div class="behavior-gutter" id="behavior-gutter" aria-hidden="true"></div><textarea id="behavior-text" wrap="off" spellcheck="true" aria-label="Everyday English translation by source line"></textarea></div><div class="editor-status"><span id="cursor-position">Ln 1, Col 1</span><span>Spaces: 2</span><span>Everyday English</span></div></section>
+		<section class="panel active" id="behavior"><div class="behavior-heading"><h2>English Code</h2><span class="behavior-hint">Everyday English, exactly one row per source line</span></div><div class="behavior-editor"><div class="behavior-gutter" id="behavior-gutter" aria-hidden="true"></div><textarea id="behavior-text" rows="1" wrap="off" spellcheck="true" aria-label="Everyday English translation by source line"></textarea></div><div class="editor-status"><span id="cursor-position">Ln 1, Col 1</span><span>Spaces: 2</span><span>Everyday English</span></div></section>
 		<section class="panel" id="overview"></section>
 		<section class="panel" id="structure"></section>
 		<section class="panel" id="effects"></section>
@@ -299,12 +271,13 @@ function paneHtml(webview: vscode.Webview): string {
 		let sourceLineCount = 1;
 		let loaded = false;
 		let updateTimer;
+		let activeGutterIndex = -1;
 		const byId = (id) => document.getElementById(id);
-		function behaviorPayload() { return behavior.map(({ statement, evidence, evidenceSuffix, startLine, endLine, symbolName }) => ({ statement, evidence, evidenceSuffix, startLine, endLine, symbolName })); }
+		function behaviorPayload() { return behavior.map((item) => item.statement); }
 		function singleLine(value) { return value.split(String.fromCharCode(10)).map((part, index) => index === 0 ? part.trimEnd() : part.trim()).join(' ').trimEnd(); }
 		function exactRow(statement, index) { const line = index + 1; return { statement, evidence: 'Line ' + String(line), evidenceSuffix: '_(' + String(line) + '–' + String(line) + ')_', startLine: line, endLine: line }; }
-		function editorPosition(input) { const newline = String.fromCharCode(10); const before = input.value.slice(0, input.selectionStart); const line = before.split(newline).length; const lastBreak = before.lastIndexOf(newline); return { line, column: input.selectionStart - lastBreak }; }
-		function updateEditorPosition() { const input = byId('behavior-text'); const position = editorPosition(input); byId('cursor-position').textContent = 'Ln ' + String(position.line) + ', Col ' + String(position.column); Array.from(byId('behavior-gutter').children).forEach((line, index) => line.classList.toggle('active', index + 1 === position.line)); }
+		function editorPosition(input) { let line = 1; let lastBreak = -1; for (let index = 0; index < input.selectionStart; index += 1) { if (input.value.charCodeAt(index) === 10) { line += 1; lastBreak = index; } } return { line, column: input.selectionStart - lastBreak }; }
+		function updateEditorPosition() { const input = byId('behavior-text'); const position = editorPosition(input); byId('cursor-position').textContent = 'Ln ' + String(position.line) + ', Col ' + String(position.column); const nextIndex = position.line - 1; if (nextIndex !== activeGutterIndex) { const gutter = byId('behavior-gutter'); gutter.children[activeGutterIndex]?.classList.remove('active'); gutter.children[nextIndex]?.classList.add('active'); activeGutterIndex = nextIndex; } }
 		function lineOffset(value, lineIndex) { const newline = String.fromCharCode(10); let offset = 0; for (let index = 0; index < lineIndex; index += 1) { const next = value.indexOf(newline, offset); if (next < 0) return value.length; offset = next + 1; } return offset; }
 		function replaceText(input, start, end, replacement, selectionMode) { input.setRangeText(replacement, start, end, selectionMode || 'end'); input.dispatchEvent(new Event('input', { bubbles: true })); }
 		function setStatus(status) { const labels = { SYNCED: 'Synced', CODE_CHANGED: 'Code changed', ENGLISH_CHANGED: 'English changed', BOTH_CHANGED: 'Both changed' }; byId('status').textContent = labels[status] || status; showSuggestedAction(status); }
@@ -320,15 +293,18 @@ function paneHtml(webview: vscode.Webview): string {
 		}
 		function scheduleUpdate() { clearTimeout(updateTimer); byId('save-state').textContent = 'Edited'; updateTimer = setTimeout(() => vscode.postMessage({ type: 'update', behavior: behaviorPayload() }), 400); }
 		function flush(type, command) { if (!loaded && command !== 'langclarity.openMarkdown') return; clearTimeout(updateTimer); vscode.postMessage({ type, command, behavior: behaviorPayload() }); }
+		function syncEditorRows() { byId('behavior-text').rows = Math.max(1, behavior.length); }
 		function renderBehavior() {
 			const input = byId('behavior-text');
 			input.value = behavior.map((item) => singleLine(item.statement)).join(String.fromCharCode(10));
+			syncEditorRows();
 			renderGutter();
 			updateEditorPosition();
 		}
 		function renderGutter() {
-			const gutter = byId('behavior-gutter'); gutter.textContent = ''; gutter.style.width = String(String(Math.max(1, behavior.length)).length) + 'ch';
-			behavior.forEach((item, index) => { const line = document.createElement('div'); line.textContent = String(index + 1); if (item.statement.length > 0) { line.className = 'mapped'; line.title = item.evidence || ('Source line ' + String(index + 1)); } line.addEventListener('click', () => { const input = byId('behavior-text'); const offset = lineOffset(input.value, index); input.focus(); input.setSelectionRange(offset, offset); updateEditorPosition(); }); gutter.appendChild(line); });
+			const gutter = byId('behavior-gutter');
+			if (gutter.children.length !== behavior.length) { const fragment = document.createDocumentFragment(); behavior.forEach((_item, index) => { const line = document.createElement('div'); line.textContent = String(index + 1); line.addEventListener('click', () => { const input = byId('behavior-text'); const offset = lineOffset(input.value, index); input.focus(); input.setSelectionRange(offset, offset); updateEditorPosition(); }); fragment.appendChild(line); }); gutter.replaceChildren(fragment); activeGutterIndex = -1; }
+			behavior.forEach((item, index) => { const line = gutter.children[index]; const mapped = item.statement.length > 0; line.classList.toggle('mapped', mapped); line.title = mapped ? item.evidence || ('Source line ' + String(index + 1)) : ''; });
 		}
 		function renderReadonly(id, sections) {
 			const root = byId(id); root.textContent = '';
@@ -338,16 +314,15 @@ function paneHtml(webview: vscode.Webview): string {
 		document.querySelectorAll('[data-command]').forEach((button) => button.addEventListener('click', () => flush('command', button.dataset.command)));
 		byId('suggested-action').addEventListener('click', (event) => flush('command', event.currentTarget.dataset.suggestedCommand));
 		byId('save').addEventListener('click', () => flush('save'));
-		byId('behavior-text').addEventListener('input', (event) => { const lines = event.target.value.split(String.fromCharCode(10)); while (lines.length < sourceLineCount) lines.push(''); behavior = lines.map((statement, index) => exactRow(statement, index)); if (event.target.value.split(String.fromCharCode(10)).length < sourceLineCount) event.target.value = behavior.map((item) => singleLine(item.statement)).join(String.fromCharCode(10)); renderGutter(); updateEditorPosition(); scheduleUpdate(); });
+		byId('behavior-text').addEventListener('input', (event) => { const lines = event.target.value.split(String.fromCharCode(10)); const needsPadding = lines.length < sourceLineCount; while (lines.length < sourceLineCount) lines.push(''); behavior = lines.map((statement, index) => exactRow(statement, index)); if (needsPadding) event.target.value = behavior.map((item) => singleLine(item.statement)).join(String.fromCharCode(10)); syncEditorRows(); renderGutter(); updateEditorPosition(); scheduleUpdate(); });
 		byId('behavior-text').addEventListener('keydown', (event) => { if (event.key !== 'Tab') return; event.preventDefault(); const input = event.target; if (input.selectionStart !== input.selectionEnd) { const start = lineOffset(input.value, editorPosition({ value: input.value, selectionStart: input.selectionStart }).line - 1); const newline = String.fromCharCode(10); const selected = input.value.slice(start, input.selectionEnd); const replacement = selected.split(newline).map((line) => event.shiftKey ? (line.startsWith('  ') ? line.slice(2) : line.startsWith(' ') ? line.slice(1) : line) : '  ' + line).join(newline); replaceText(input, start, input.selectionEnd, replacement, 'select'); } else if (event.shiftKey) { const start = lineOffset(input.value, editorPosition(input).line - 1); const removable = input.value.slice(start, input.selectionStart).endsWith('  ') ? 2 : input.value.slice(start, input.selectionStart).endsWith(' ') ? 1 : 0; if (removable > 0) replaceText(input, input.selectionStart - removable, input.selectionStart, '', 'end'); } else { replaceText(input, input.selectionStart, input.selectionEnd, '  ', 'end'); } });
-		byId('behavior-text').addEventListener('scroll', (event) => { byId('behavior-gutter').scrollTop = event.target.scrollTop; });
 		['click', 'keyup', 'select'].forEach((name) => byId('behavior-text').addEventListener(name, updateEditorPosition));
 		document.addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); flush('save'); } });
 		window.addEventListener('message', (event) => {
 			const message = event.data;
-			if (message.type === 'content') { const content = message.content; sourceLineCount = Math.max(1, content.sourceLineCount); behavior = content.behavior; loaded = true; byId('source').textContent = content.source; byId('meta').textContent = 'Model: ' + content.model + ' · Interpreted ' + new Date(content.interpretedAt).toLocaleString(); setStatus(content.status); renderBehavior(); renderReadonly('overview', content.overview); renderReadonly('structure', content.structure); renderReadonly('effects', content.effects); byId('error').style.display = 'none'; }
+			if (message.type === 'content') { const content = message.content; sourceLineCount = Math.max(1, content.sourceLineCount); behavior = content.behavior; loaded = true; byId('source').textContent = content.source; byId('meta').textContent = 'Model: ' + content.model + ' · Interpreted ' + new Date(content.interpretedAt).toLocaleString(); setStatus(content.status); renderBehavior(); renderReadonly('overview', content.overview); renderReadonly('structure', content.structure); renderReadonly('effects', content.effects); byId('error').hidden = true; }
 			if (message.type === 'status') { setStatus(message.status); }
-			if (message.type === 'error') { byId('suggested-action').hidden = true; byId('error').textContent = message.message; byId('error').style.display = 'block'; }
+			if (message.type === 'error') { byId('suggested-action').hidden = true; byId('error').textContent = message.message; byId('error').hidden = false; }
 			if (message.type === 'saved') { byId('save-state').textContent = message.saved ? 'Saved' : 'Edited'; }
 			if (message.type === 'documentSaved') { setStatus(message.status); }
 		});

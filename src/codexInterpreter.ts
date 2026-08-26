@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import {
 	codeToEnglishSchema,
 	lineCount,
+	MAX_ENGLISH_BYTES,
 	MAX_SOURCE_BYTES,
 	MAX_SOURCE_LINES,
 	numberedSource,
@@ -20,14 +21,14 @@ import {
 	type CodexModel,
 	type CodexModelPreference,
 } from './modelSelection';
+import { isRecord } from './typeGuards';
 
 const MINIMUM_CODEX_VERSION = '0.148.0-alpha.15';
 const MAX_PROTOCOL_LINE_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const TURN_TIMEOUT_MS = 180_000;
-const MAX_PROPOSED_SOURCE_BYTES = 75 * 1024;
-const MAX_ENGLISH_REQUEST_BYTES = 256 * 1024;
 const MAX_NOTIFICATIONS = 10_000;
+const supportedVersionChecks = new Map<string, Promise<void>>();
 const DISABLED_CODEX_FEATURES = [
 	'apps',
 	'browser_use',
@@ -171,7 +172,7 @@ export class CodexInterpreter {
 
 	async englishToCode(input: EnglishToCodeInput): Promise<EnglishToCodeOutput> {
 		assertBoundedSource(input.source);
-		if (Buffer.byteLength(input.english, 'utf8') > MAX_ENGLISH_REQUEST_BYTES) {
+		if (Buffer.byteLength(input.english, 'utf8') > MAX_ENGLISH_BYTES) {
 			throw new Error('The English document exceeds the LangClarity MVP limit of 256 KiB.');
 		}
 		const output = await this.runStructuredTurn({
@@ -336,8 +337,8 @@ export function validateCodeChangeResult(value: unknown): CodeChangeResult {
 		|| Object.keys(value).length !== 2
 		|| typeof value.proposedSource !== 'string'
 		|| value.proposedSource.length === 0
-		|| Buffer.byteLength(value.proposedSource, 'utf8') > MAX_PROPOSED_SOURCE_BYTES
-		|| lineCount(value.proposedSource) > 2_000
+		|| Buffer.byteLength(value.proposedSource, 'utf8') > MAX_SOURCE_BYTES
+		|| lineCount(value.proposedSource) > MAX_SOURCE_LINES
 		|| typeof value.summary !== 'string'
 		|| value.summary.trim().length === 0
 		|| value.summary.length > 1_000
@@ -405,7 +406,22 @@ function resolveCodexExecutable(): string {
 		: 'codex';
 }
 
-async function assertSupportedVersion(executable: string): Promise<void> {
+function assertSupportedVersion(executable: string): Promise<void> {
+	const existing = supportedVersionChecks.get(executable);
+	if (existing) {
+		return existing;
+	}
+	const check = checkSupportedVersion(executable);
+	supportedVersionChecks.set(executable, check);
+	void check.catch(() => {
+		if (supportedVersionChecks.get(executable) === check) {
+			supportedVersionChecks.delete(executable);
+		}
+	});
+	return check;
+}
+
+async function checkSupportedVersion(executable: string): Promise<void> {
 	const versionOutput = await runProcess(executable, ['--version']);
 	const version = versionOutput.match(/\d+\.\d+\.\d+(?:-[\w.]+)?/u)?.[0];
 	if (!version) {
@@ -630,12 +646,7 @@ class AppServerClient {
 					errorNotification?.params?.willRetry === true,
 				);
 			}
-			const response = this.notifications
-				.filter((notification) => notification.method === 'item/completed'
-					&& notification.params?.turnId === turnId
-					&& (notification.params?.item as { type?: string } | undefined)?.type === 'agentMessage')
-				.map((notification) => (notification.params?.item as { text?: string }).text)
-				.at(-1);
+			const response = latestAgentMessage(this.notifications, turnId);
 			if (!response) {
 				throw new Error('Codex completed without a structured result.');
 			}
@@ -797,10 +808,6 @@ class AppServerClient {
 	}
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isRpcError(value: unknown): value is { message: string } {
 	return isRecord(value) && typeof value.message === 'string' && value.message.length > 0;
 }
@@ -808,4 +815,18 @@ function isRpcError(value: unknown): value is { message: string } {
 function turnIdFrom(notification: RpcNotification): string | undefined {
 	const turn = notification.params?.turn;
 	return isRecord(turn) && typeof turn.id === 'string' ? turn.id : undefined;
+}
+
+function latestAgentMessage(notifications: RpcNotification[], turnId: string): string | undefined {
+	for (let index = notifications.length - 1; index >= 0; index -= 1) {
+		const notification = notifications[index];
+		if (notification.method !== 'item/completed' || notification.params?.turnId !== turnId) {
+			continue;
+		}
+		const item = notification.params.item;
+		if (isRecord(item) && item.type === 'agentMessage' && typeof item.text === 'string') {
+			return item.text;
+		}
+	}
+	return undefined;
 }

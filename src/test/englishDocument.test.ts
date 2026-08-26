@@ -70,11 +70,20 @@ suite('English document', () => {
 	});
 
 	test('recognizes the Phase 1 legacy baseline hash', () => {
-		const legacyHash = hashText(JSON.stringify(result));
-		const legacyMarkdown = rendered().replace(
+		const legacyResult = {
+			...result,
+			behavior: [{
+				statement: 'Return the greeting.',
+				evidence: { startLine: 1, endLine: 1, symbolName: 'greet' },
+			}],
+		};
+		const legacyHash = hashText(JSON.stringify(legacyResult));
+		const legacyMarkdown = rendered()
+			.replace('_(1–1)_', '_(1–1; symbol `greet`)_')
+			.replace(
 			/editableEnglishHash: "sha256:[a-f0-9]{64}"/u,
 			`editableEnglishHash: "${legacyHash}"`,
-		);
+			);
 		const parsed = parseEnglishDocument(legacyMarkdown);
 
 		assert.ok(parsed.currentEnglishHashes.includes(legacyHash));

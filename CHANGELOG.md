@@ -13,6 +13,8 @@
 - Code → English now produces exactly one concise everyday-language row per source line, carries context through parent rows and indentation, preserves known literal values verbatim, and persists blank aligned rows.
 - Context menus and the Command Palette now hide actions that do not apply to the active file or its interpretation state.
 - The Behavior editor's line-number gutter now grows responsively with the number of displayed digits.
+- English Code now grows vertically with its rows and uses pane-level vertical scrolling while retaining horizontal scrolling for long rows.
+- All interpretation tabs now reuse one full-width, content-growing, pane-scrolling layout without horizontal content insets.
 - Renamed the pane's Behavior label to English Code and replaced permanent sync buttons with one state-valid action.
 - Added persistent Code → English interpretations for TypeScript and JavaScript.
 - Added editable English → Code proposals with syntax validation, VS Code diff review, and explicit apply.

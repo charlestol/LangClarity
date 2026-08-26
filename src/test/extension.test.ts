@@ -108,10 +108,32 @@ suite('Extension contributions', () => {
 			path.join(__dirname, '..', 'interpretationViewProvider.js'),
 			'utf8',
 		);
+		const stylesheet = readFileSync(
+			path.join(__dirname, '..', '..', 'media', 'interpretationView.css'),
+			'utf8',
+		);
 
+		assert.match(provider, /asWebviewUri/u);
+		assert.match(provider, /localResourceRoots/u);
+		assert.match(provider, /<link rel="stylesheet"/u);
+		assert.doesNotMatch(provider, /<style>/u);
+		assert.doesNotMatch(provider, /unsafe-inline/u);
 		assert.match(provider, /id="behavior-gutter"/u);
-		assert.match(provider, /gutter\.style\.width = String\(String\(Math\.max\(1, behavior\.length\)\)\.length\) \+ 'ch'/u);
+		assert.match(provider, /gutter\.replaceChildren\(fragment\)/u);
+		assert.match(provider, /activeGutterIndex/u);
+		assert.match(provider, /function behaviorPayload\(\) \{ return behavior\.map\(\(item\) => item\.statement\); \}/u);
 		assert.match(provider, /<textarea id="behavior-text"/u);
+		assert.match(provider, /rows="1"/u);
+		assert.match(provider, /function syncEditorRows/u);
+		assert.match(provider, /\.rows = Math\.max\(1, behavior\.length\)/u);
+		assert.doesNotMatch(provider, /\.style\./u);
+		assert.match(stylesheet, /overflow-y: hidden/u);
+		assert.match(stylesheet, /main \{ padding: 20px 0 48px; \}/u);
+		assert.match(stylesheet, /\.panel \{ box-sizing: border-box; display: none; width: 100%; \}/u);
+		assert.doesNotMatch(stylesheet, /#overview, #structure, #effects/u);
+		assert.doesNotMatch(stylesheet, /main \{ max-width: 920px/u);
+		assert.doesNotMatch(stylesheet, /height: min\(58vh, 620px\)/u);
+		assert.doesNotMatch(provider, /gutter'\)\.scrollTop/u);
 		assert.match(provider, /sourceLineCount/u);
 		assert.match(provider, /Everyday English, exactly one row per source line/u);
 		assert.match(provider, /function exactRow/u);

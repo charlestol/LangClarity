@@ -4,6 +4,7 @@ import {
 	AuthenticationRequiredError,
 	CodexInterpreter,
 	CodexResponseError,
+	type CodeToEnglishOutput,
 	type ModelResolution,
 	UsageLimitedError,
 } from './codexInterpreter';
@@ -17,6 +18,7 @@ import {
 import {
 	englishUriFor,
 	hashText,
+	MAX_ENGLISH_BYTES,
 	MAX_SOURCE_BYTES,
 	MAX_SOURCE_LINES,
 	lineCount,
@@ -39,8 +41,6 @@ import type { CodexModel, CodexModelPreference } from './modelSelection';
 const disclosureKey = 'langclarity.providerDisclosureAccepted.v2';
 const modelPreferenceKey = 'langclarity.selectedModelId';
 const reasoningPreferenceKey = 'langclarity.selectedReasoningEffort';
-const MAX_ENGLISH_BYTES = 256 * 1024;
-
 interface SyncCommandOptions {
 	authorityConfirmed?: boolean;
 	sourceUri?: vscode.Uri;
@@ -65,7 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		proposals,
 		vscode.window.registerCustomEditorProvider(
 			interpretationViewType,
-			new InterpretationViewProvider(sourceUriForEnglishDocument),
+			new InterpretationViewProvider(context.extensionUri, sourceUriForEnglishDocument),
 			{ webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false },
 		),
 		vscode.commands.registerCommand('langclarity.selectModel', async (input?: SourceCommandInput) => {
@@ -201,18 +201,11 @@ export function activate(context: vscode.ExtensionContext): void {
 					if (source.document.isClosed) {
 						throw new Error('The source was closed or moved while Codex was interpreting it. No English file was written.');
 					}
-					const markdown = renderInterpretation({
-						result: interpreted.document,
+					const markdown = renderedEnglishDocument(interpreted, {
 						sourcePath,
 						sourceHash,
 						languageId: source.document.languageId,
-						model: interpreted.model,
-						interpretedAt: new Date().toISOString(),
 					});
-					if (Buffer.byteLength(markdown, 'utf8') > MAX_ENGLISH_BYTES) {
-						throw new Error('Codex returned an English interpretation larger than the LangClarity MVP limit of 256 KiB.');
-					}
-					parseEnglishDocument(markdown);
 					await writeNewFileAtomically(englishUri, markdown);
 				});
 				output.appendLine(`interpret:completed file=${fileName}`);
@@ -378,19 +371,11 @@ export function activate(context: vscode.ExtensionContext): void {
 					if (cancellationToken.isCancellationRequested) {
 						throw new vscode.CancellationError();
 					}
-					const markdown = renderInterpretation({
-						result: interpreted.document,
+					return renderedEnglishDocument(interpreted, {
 						sourcePath: capture.parsedEnglish.frontmatter.source,
 						sourceHash: hashText(proposedSource),
 						languageId: capture.parsedEnglish.frontmatter.languageId,
-						model: interpreted.model,
-						interpretedAt: new Date().toISOString(),
 					});
-					if (Buffer.byteLength(markdown, 'utf8') > MAX_ENGLISH_BYTES) {
-						throw new Error('Codex returned an English interpretation larger than the LangClarity MVP limit of 256 KiB.');
-					}
-					parseEnglishDocument(markdown);
-					return markdown;
 				});
 			} catch (error) {
 				if (error instanceof vscode.CancellationError) {
@@ -488,18 +473,11 @@ export function activate(context: vscode.ExtensionContext): void {
 					modelPreference: currentModelPreference(context),
 				}));
 				await reportModelResolution(context, interpreted);
-				const markdown = renderInterpretation({
-					result: interpreted.document,
+				const markdown = renderedEnglishDocument(interpreted, {
 					sourcePath: capture.parsedEnglish.frontmatter.source,
 					sourceHash: capture.sourceHash,
 					languageId: capture.parsedEnglish.frontmatter.languageId,
-					model: interpreted.model,
-					interpretedAt: new Date().toISOString(),
 				});
-				if (Buffer.byteLength(markdown, 'utf8') > MAX_ENGLISH_BYTES) {
-					throw new Error('Codex returned an English interpretation larger than the LangClarity MVP limit of 256 KiB.');
-				}
-				parseEnglishDocument(markdown);
 				const englishDocument = await vscode.workspace.openTextDocument(capture.englishUri);
 				const current = await sessions.captureForSource(capture.sourceUri);
 				if (!current
@@ -537,6 +515,23 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 		}),
 	);
+}
+
+function renderedEnglishDocument(
+	interpreted: CodeToEnglishOutput,
+	input: { sourcePath: string; sourceHash: string; languageId: string },
+): string {
+	const markdown = renderInterpretation({
+		result: interpreted.document,
+		...input,
+		model: interpreted.model,
+		interpretedAt: new Date().toISOString(),
+	});
+	if (Buffer.byteLength(markdown, 'utf8') > MAX_ENGLISH_BYTES) {
+		throw new Error('Codex returned an English interpretation larger than the LangClarity MVP limit of 256 KiB.');
+	}
+	parseEnglishDocument(markdown);
+	return markdown;
 }
 
 function registerCommandVisibility(): vscode.Disposable {

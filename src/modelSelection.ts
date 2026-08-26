@@ -1,3 +1,5 @@
+import { isRecord } from './typeGuards';
+
 export interface CodexModel {
 	id: string;
 	displayName: string;
@@ -73,8 +75,4 @@ export function resolveCodexModel(
 		...(reasoningEffort ? { reasoningEffort } : {}),
 		...(preference.modelId && !preferred ? { unavailableModelId: preference.modelId } : {}),
 	};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

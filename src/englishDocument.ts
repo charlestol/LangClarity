@@ -1,4 +1,5 @@
 import { hashText } from './hash';
+import { unescapeMarkdown } from './markdownText';
 
 const generatedStart = '<!-- langclarity:generated:start relationships -->';
 const generatedEnd = '<!-- langclarity:generated:end relationships -->';
@@ -275,14 +276,6 @@ function parseList(value: string): string[] {
 		}
 		return unescapeMarkdown(line.slice(2));
 	});
-}
-
-function unescapeMarkdown(value: string): string {
-	return value
-		.replaceAll('&lt;', '<')
-		.replaceAll('&gt;', '>')
-		.replaceAll('&amp;', '&')
-		.replace(/\\([\\`\[\]])/gu, '$1');
 }
 
 function normalizeNewlines(value: string): string {

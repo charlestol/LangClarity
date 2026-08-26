@@ -156,27 +156,15 @@ export class SessionCoordinator implements vscode.Disposable {
 		const revision = ++session.revision;
 		const previousState = session.state;
 		try {
-			const [sourceText, englishText] = await Promise.all([
-				readCurrentText(session.sourceUri),
-				readCurrentText(session.englishUri),
-			]);
-			const parsed = parseEnglishDocument(englishText);
-			const workspace = vscode.workspace.getWorkspaceFolder(session.sourceUri);
-			if (!workspace) {
-				throw new Error('The paired source is no longer inside a workspace.');
-			}
-			const expectedSource = relativeSourcePath(workspace.uri, session.sourceUri);
-			if (parsed.frontmatter.source !== expectedSource) {
-				throw new Error('The English document points to a different source file.');
-			}
+			const { sourceText, parsedEnglish } = await this.readSessionDocuments(session);
 			if (revision !== session.revision) {
 				return;
 			}
 			session.state = deriveSyncState(
 				hashText(sourceText),
-				parsed.frontmatter.sourceHash,
-				parsed.currentEnglishHashes,
-				parsed.frontmatter.editableEnglishHash,
+				parsedEnglish.frontmatter.sourceHash,
+				parsedEnglish.currentEnglishHashes,
+				parsedEnglish.frontmatter.editableEnglishHash,
 			);
 			session.error = undefined;
 		} catch (error) {
@@ -197,19 +185,7 @@ export class SessionCoordinator implements vscode.Disposable {
 	private async capture(session: FileSession): Promise<SessionCapture> {
 		this.cancelScheduledRefresh(session);
 		session.revision += 1;
-		const [sourceText, englishText] = await Promise.all([
-			readCurrentText(session.sourceUri),
-			readCurrentText(session.englishUri),
-		]);
-		const parsedEnglish = parseEnglishDocument(englishText);
-		const workspace = vscode.workspace.getWorkspaceFolder(session.sourceUri);
-		if (!workspace) {
-			throw new Error('The paired source is no longer inside a workspace.');
-		}
-		const expectedSource = relativeSourcePath(workspace.uri, session.sourceUri);
-		if (parsedEnglish.frontmatter.source !== expectedSource) {
-			throw new Error('The English document points to a different source file.');
-		}
+		const { sourceText, englishText, parsedEnglish } = await this.readSessionDocuments(session);
 		const sourceHash = hashText(sourceText);
 		const editableEnglishHash = parsedEnglish.currentEnglishHashes[0];
 		const state = deriveSyncState(
@@ -232,6 +208,27 @@ export class SessionCoordinator implements vscode.Disposable {
 			englishDocumentHash: hashText(englishText),
 			parsedEnglish,
 		};
+	}
+
+	private async readSessionDocuments(session: FileSession): Promise<{
+		sourceText: string;
+		englishText: string;
+		parsedEnglish: ParsedEnglishDocument;
+	}> {
+		const [sourceText, englishText] = await Promise.all([
+			readCurrentText(session.sourceUri),
+			readCurrentText(session.englishUri),
+		]);
+		const parsedEnglish = parseEnglishDocument(englishText);
+		const workspace = vscode.workspace.getWorkspaceFolder(session.sourceUri);
+		if (!workspace) {
+			throw new Error('The paired source is no longer inside a workspace.');
+		}
+		const expectedSource = relativeSourcePath(workspace.uri, session.sourceUri);
+		if (parsedEnglish.frontmatter.source !== expectedSource) {
+			throw new Error('The English document points to a different source file.');
+		}
+		return { sourceText, englishText, parsedEnglish };
 	}
 
 	private updateStatus(): void {

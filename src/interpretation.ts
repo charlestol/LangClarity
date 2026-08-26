@@ -1,12 +1,14 @@
 import path from 'node:path';
 import * as vscode from 'vscode';
 import { hashEditableBody, renderFrontmatter } from './englishDocument';
-import { hashText } from './hash';
+import { escapeMarkdown } from './markdownText';
+import { isRecord } from './typeGuards';
 
 export { hashText } from './hash';
 
 export const MAX_SOURCE_BYTES = 75 * 1024;
 export const MAX_SOURCE_LINES = 2_000;
+export const MAX_ENGLISH_BYTES = 256 * 1024;
 
 export function codeToEnglishSchema(sourceLineCount: number): Record<string, unknown> {
 	return {
@@ -65,10 +67,6 @@ const supportedLanguageIds = new Set([
 	'javascriptreact',
 ]);
 const supportedExtensions = new Set(['.ts', '.tsx', '.js', '.jsx']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
 	const keys = Object.keys(value).sort();
@@ -177,17 +175,6 @@ export function relativeSourcePath(workspaceUri: vscode.Uri, sourceUri: vscode.U
 export function englishUriFor(workspaceUri: vscode.Uri, sourceUri: vscode.Uri): vscode.Uri {
 	const relative = relativeSourcePath(workspaceUri, sourceUri);
 	return vscode.Uri.joinPath(workspaceUri, '.langclarity', `${relative}.md`);
-}
-
-function escapeMarkdown(text: string): string {
-	return text
-		.replaceAll('\\', '\\\\')
-		.replaceAll('&', '&amp;')
-		.replaceAll('`', '\\`')
-		.replaceAll('[', '\\[')
-		.replaceAll(']', '\\]')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;');
 }
 
 function renderList(items: string[]): string {
