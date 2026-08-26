@@ -9,7 +9,7 @@ This document is the concise architecture map for the MVP. It records the bounda
 ```text
 src/users.ts ↔ .langclarity/src/users.ts.md
         ↕              ↕
-  native editor   native Markdown editor
+  native editor   interpretation pane
         └──── Codex interpreter ────┘
 ```
 
@@ -24,7 +24,7 @@ The proof-of-concept question is whether durable English improves practical unde
 | AI | Codex only |
 | Auth | Codex-managed ChatGPT authentication; no API keys |
 | Invocation | Explicit user action; opening files never invokes AI |
-| English editor/storage | Native Markdown under `.langclarity/`, one-to-one with source paths |
+| English editor/storage | Interpretation pane backed by Markdown under `.langclarity/`, one-to-one with source paths |
 | Model choice | Codex default plus non-hidden models returned by the runtime; recommend `medium` reasoning for interpretation |
 | Synchronization | Manual and directional only |
 | Conflict | If both sides changed, the user chooses the winner; no merge |
@@ -35,13 +35,13 @@ LangClarity never silently changes `.gitignore`; each team decides whether `.lan
 
 ## Core experience
 
-1. Open a supported source file and run **LangClarity: Open English View**.
+1. Open or right-click a supported source file and run **LangClarity: Open Interpretation**.
 2. If no paired Markdown exists, explicitly select **Interpret File**.
 3. LangClarity asks Codex for schema-conforming English and renders it into predictable Markdown sections.
-4. Edit code or English in normal VS Code editors.
+4. Edit code in the native editor or any source-line Behavior row in the interpretation pane's single text surface; raw Markdown remains directly openable.
 5. **Code → English** refreshes the Markdown after an explicit request.
 6. **English → Code** creates a proposed source document, validates it, and opens an exact diff.
-7. Only explicit approval applies minimal editor edits; LangClarity does not auto-save source.
+7. After explicit approval, LangClarity regenerates every interpretation section from the proposed source and atomically applies both documents; it does not auto-save source.
 
 Conceptual states are `SYNCED`, `CODE_CHANGED`, `ENGLISH_CHANGED`, `BOTH_CHANGED`, `INTERPRETING`, and `ERROR`. Separate source and editable-English hashes derive state. Locally generated relationship/test evidence has its own revision hash so refreshing it does not impersonate a user English edit.
 
@@ -51,7 +51,7 @@ Conceptual states are `SYNCED`, `CODE_CHANGED`, `ENGLISH_CHANGED`, `BOTH_CHANGED
 VS Code commands, CodeLens, and status
                    │
                    ▼
-Native Markdown ─ Session/state coordinator ─ Native source document
+Interpretation pane ─ Session/state coordinator ─ Native source document
       │                    │                         │
 .langclarity tree          ├── Markdown schema      ├── TS/JS validation
                            ├── hashes/mappings      └── diff/WorkspaceEdit
@@ -62,7 +62,7 @@ Native Markdown ─ Session/state coordinator ─ Native source document
                  Codex-managed ChatGPT auth
 ```
 
-Suggested modules are the extension entry point, path/Markdown repository, file-session coordinator, source adapter, TS/JS parser/validator, `CodexInterpreter`, proposal/diff coordinator, and redacted logger. Do not add a webview, UI framework, provider marketplace, semantic IR, or backend for the POC.
+Suggested modules are the extension entry point, Markdown-backed interpretation view, path/Markdown repository, file-session coordinator, source adapter, TS/JS parser/validator, `CodexInterpreter`, proposal/diff coordinator, and redacted logger. The interpretation view uses VS Code's custom text-editor API without a UI framework or hidden content store. Do not add a provider marketplace, semantic IR, or backend for the POC.
 
 ## Detailed-design map
 
@@ -91,7 +91,7 @@ Error handling stays intentionally small. Authentication required and usage limi
 
 Each Markdown file uses versioned frontmatter containing the source path/hash, editable-English hash, language, prompt version, model, and interpretation time. Predictable sections cover purpose, responsibilities, behavior, symbols, dependencies, related files/tests, side effects, and constraints.
 
-The model returns structured data; LangClarity validates it and renders Markdown. Important behavior claims carry a source symbol or line range so they are inspectable. The Markdown is canonical after creation, including edits made by another coding agent. Symbols, imports, exports, verified paths, and optional test relationships are derived locally and placed in generated sections instead of being trusted as model claims. Stable sentence-to-AST identity is not required.
+The model returns structured data with exactly one ordered English Code item per source line; LangClarity validates exact line-count and line-number parity before rendering Markdown. Each item uses the shortest clear everyday wording supported by its paired source line. Parent rows and indentation carry context to avoid repetition, while visible literal values remain verbatim. The Markdown is canonical after creation, including edits made by another coding agent. Symbols, imports, exports, verified paths, and optional test relationships are derived locally and placed in generated sections instead of being trusted as model claims. Stable AST identity is not required.
 
 ## Safety and lifecycle invariants
 

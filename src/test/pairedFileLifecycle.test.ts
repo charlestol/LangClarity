@@ -205,7 +205,7 @@ function fixtureMarkdown(sourcePath: string): string {
 			responsibilities: ['Create a greeting.'],
 			behavior: [{
 				statement: 'Return the greeting.',
-				evidence: { startLine: 1, endLine: 1, symbolName: 'greet' },
+				sourceLine: 1,
 			}],
 			sideEffects: [],
 			constraints: [],

@@ -152,16 +152,17 @@ export class CodexInterpreter {
 
 	async codeToEnglish(input: CodeToEnglishInput): Promise<CodeToEnglishOutput> {
 		assertBoundedSource(input.source);
+		const sourceLineCount = lineCount(input.source);
 		const output = await this.runStructuredTurn({
 			prompt: buildCodeToEnglishPrompt(input.source, input.sourcePath, input.languageId),
-			schema: codeToEnglishSchema,
+			schema: codeToEnglishSchema(sourceLineCount),
 			preferMedium: true,
 			cancellationToken: input.cancellationToken,
 			onRetry: input.onRetry,
 			modelPreference: input.modelPreference,
 		});
 		return {
-			document: validateInterpretation(output.parsed, lineCount(input.source)),
+			document: validateInterpretation(output.parsed, input.source),
 			model: output.model,
 			...(output.unavailableModelId ? { unavailableModelId: output.unavailableModelId } : {}),
 			...(output.modelEnumerationFailed ? { modelEnumerationFailed: true } : {}),
@@ -288,13 +289,27 @@ function assertBoundedSource(source: string): void {
 }
 
 function buildCodeToEnglishPrompt(source: string, sourcePath: string, languageId: string): string {
+	const sourceLineCount = lineCount(source);
 	return [
-		`Interpret ${sourcePath} (${languageId}) as concise, editable, structured English.`,
-		'Preserve logical order and control flow. Include useful identifiers.',
+		`Interpret ${sourcePath} (${languageId}) as English that an everyday person can understand as easily as possible.`,
+		`Return exactly ${sourceLineCount} behavior items: one item for every numbered source line, in the same order.`,
+		'For item 1 use sourceLine 1, for item 2 use sourceLine 2, and continue without gaps, duplicates, combining lines, or reordering.',
+		'Write each statement as the everyday meaning of only that source line. Use an empty statement for a blank source line.',
+		'Lead with plain meaning. Mention a code identifier afterward only when it is needed for exact correspondence or later reference.',
+		'Use the shortest clear wording. Prefer one clause and about 12 to 18 words, excluding any literal value that must be preserved.',
+		'Let an opening or parent row establish context for the indented rows beneath it. Do not repeat a subject, identifier, type, or explanation when that context remains unambiguous.',
+		'Readable fragments are allowed when they are clearer and shorter, such as "Message 1: \"Hello.\"" or "Remember this choice."',
+		'For syntax-only closing lines, use a minimal phrase such as "End the function." or "End the list."',
+		'Preserve every visible string, number, boolean, property name, event name, URL, log label, and other known value verbatim in that line\'s statement.',
+		'When a value can be worked out from fixed source values, state the everyday result and retain the underlying rule when it matters. For example, say "Choose a whole number from 0 through 16 to select one of the 17 messages."',
+		'Avoid unexplained technical terms such as array, index, mutation, boolean, callback, instance, or expression. If one is unavoidable, explain it in the same sentence.',
+		'Use familiar phrases such as "Create...", "Remember...", "If..., then...", "For each...", "Keep doing this until...", and "Give back..." when they fit.',
+		'Do not use uppercase pseudocode keywords, assignment arrows, symbolic operators, or programming-language syntax as sentence structure.',
+		'Use two-space indentation inside statements to show that a source line belongs inside a function, condition, loop, or other enclosing action.',
+		'Avoid narrative filler, repeated context, vague summaries such as "the listed strings" or "the configured value", mechanical syntax transcription, and behavior not present in the source.',
 		'Make only claims supported by the numbered source and omit uncertain claims.',
 		'Distinguish mutation of inputs from mutation of copied or temporary values.',
 		'Check behavior, side effects, and constraints for contradictions.',
-		'Attach a valid source line range and symbol name when available to every behavior item.',
 		'Do not use tools. Return only JSON matching the supplied schema.',
 		'',
 		numberedSource(source),

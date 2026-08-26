@@ -1,5 +1,4 @@
 import { hashText } from './hash';
-import type { InterpretationResult } from './interpretation';
 
 const generatedStart = '<!-- langclarity:generated:start relationships -->';
 const generatedEnd = '<!-- langclarity:generated:end relationships -->';
@@ -228,7 +227,7 @@ function legacyEditableEnglishHash(body: string): string | undefined {
 		const behaviorText = section(body, '## Behavior', generatedStart).trim();
 		const sideEffects = parseList(section(body, '## Side effects', '## Constraints'));
 		const constraints = parseList(body.slice(body.indexOf('## Constraints') + '## Constraints'.length));
-		const behavior: InterpretationResult['behavior'] = behaviorText === '_None identified._'
+		const behavior = behaviorText === '_None identified._'
 			? []
 			: behaviorText.split('\n').map((line) => {
 				const match = line.match(/^\d+\. (.+) _\((\d+)–(\d+)(?:; symbol `(.+)`)?\)_$/u);

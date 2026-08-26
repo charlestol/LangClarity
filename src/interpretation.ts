@@ -8,52 +8,43 @@ export { hashText } from './hash';
 export const MAX_SOURCE_BYTES = 75 * 1024;
 export const MAX_SOURCE_LINES = 2_000;
 
-export const codeToEnglishSchema = {
-	type: 'object',
-	additionalProperties: false,
-	required: ['purpose', 'responsibilities', 'behavior', 'sideEffects', 'constraints'],
-	properties: {
-		purpose: { type: 'string' },
-		responsibilities: { type: 'array', items: { type: 'string' } },
-		behavior: {
-			type: 'array',
-			items: {
-				type: 'object',
-				additionalProperties: false,
-				required: ['statement', 'evidence'],
-				properties: {
-					statement: { type: 'string' },
-					evidence: {
-						type: 'object',
-						additionalProperties: false,
-						required: ['startLine', 'endLine', 'symbolName'],
-						properties: {
-							startLine: { type: 'integer', minimum: 1 },
-							endLine: { type: 'integer', minimum: 1 },
-							symbolName: { type: 'string' },
-						},
+export function codeToEnglishSchema(sourceLineCount: number): Record<string, unknown> {
+	return {
+		type: 'object',
+		additionalProperties: false,
+		required: ['purpose', 'responsibilities', 'behavior', 'sideEffects', 'constraints'],
+		properties: {
+			purpose: { type: 'string' },
+			responsibilities: { type: 'array', items: { type: 'string' } },
+			behavior: {
+				type: 'array',
+				minItems: sourceLineCount,
+				maxItems: sourceLineCount,
+				items: {
+					type: 'object',
+					additionalProperties: false,
+					required: ['sourceLine', 'statement'],
+					properties: {
+						sourceLine: { type: 'integer', minimum: 1, maximum: sourceLineCount },
+						statement: { type: 'string', maxLength: 500 },
 					},
 				},
 			},
+			sideEffects: { type: 'array', items: { type: 'string' } },
+			constraints: { type: 'array', items: { type: 'string' } },
 		},
-		sideEffects: { type: 'array', items: { type: 'string' } },
-		constraints: { type: 'array', items: { type: 'string' } },
-	},
-} as const;
-
-export interface BehaviorItem {
-	statement: string;
-	evidence: {
-		startLine: number;
-		endLine: number;
-		symbolName: string;
 	};
+}
+
+export interface EnglishCodeLine {
+	statement: string;
+	sourceLine: number;
 }
 
 export interface InterpretationResult {
 	purpose: string;
 	responsibilities: string[];
-	behavior: BehaviorItem[];
+	behavior: EnglishCodeLine[];
 	sideEffects: string[];
 	constraints: string[];
 }
@@ -99,7 +90,15 @@ function isStringArray(value: unknown): value is string[] {
 		&& value.every((item) => isPlainText(item, 500));
 }
 
-export function validateInterpretation(value: unknown, sourceLineCount: number): InterpretationResult {
+function isEnglishCodeLine(value: unknown): value is string {
+	return typeof value === 'string'
+		&& value.length <= 500
+		&& !/[\r\n\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value);
+}
+
+export function validateInterpretation(value: unknown, source: string | number): InterpretationResult {
+	const sourceLines = typeof source === 'string' ? source.split(/\r\n|\r|\n/u) : undefined;
+	const sourceLineCount = sourceLines?.length ?? source;
 	if (!isRecord(value)
 		|| !hasExactKeys(value, ['purpose', 'responsibilities', 'behavior', 'sideEffects', 'constraints'])
 		|| !isPlainText(value.purpose)
@@ -107,38 +106,23 @@ export function validateInterpretation(value: unknown, sourceLineCount: number):
 		|| !isStringArray(value.sideEffects)
 		|| !isStringArray(value.constraints)
 		|| !Array.isArray(value.behavior)
-		|| value.behavior.length > 200) {
+		|| value.behavior.length !== sourceLineCount) {
 		throw new Error('Codex returned an invalid interpretation.');
 	}
 
-	const behavior = value.behavior.map((item): BehaviorItem => {
+	const behavior = value.behavior.map((item, index): EnglishCodeLine => {
+		const sourceIsBlank = sourceLines?.[index].trim().length === 0;
 		if (!isRecord(item)
-			|| !hasExactKeys(item, ['statement', 'evidence'])
-			|| !isPlainText(item.statement, 500)
-			|| !isRecord(item.evidence)
-			|| !hasExactKeys(item.evidence, ['startLine', 'endLine', 'symbolName'])) {
+			|| !hasExactKeys(item, ['sourceLine', 'statement'])
+			|| !isEnglishCodeLine(item.statement)
+			|| item.sourceLine !== index + 1
+			|| (sourceIsBlank === true && item.statement !== '')
+			|| (sourceIsBlank === false && item.statement.trim().length === 0)) {
 			throw new Error('Codex returned an invalid interpretation.');
 		}
-
-		const { startLine, endLine, symbolName } = item.evidence;
-		if (!Number.isInteger(startLine)
-			|| !Number.isInteger(endLine)
-			|| (startLine as number) < 1
-			|| (endLine as number) < (startLine as number)
-			|| (endLine as number) > sourceLineCount
-			|| typeof symbolName !== 'string'
-			|| symbolName.length > 200
-			|| /[\r\n]/u.test(symbolName)) {
-			throw new Error('Codex returned an interpretation with invalid source evidence.');
-		}
-
 		return {
 			statement: item.statement,
-			evidence: {
-				startLine: startLine as number,
-				endLine: endLine as number,
-				symbolName,
-			},
+			sourceLine: item.sourceLine as number,
 		};
 	});
 
@@ -151,13 +135,21 @@ export function validateInterpretation(value: unknown, sourceLineCount: number):
 	};
 }
 
-export function sourceEligibilityError(document: vscode.TextDocument): string | undefined {
+export function sourceAccessError(document: vscode.TextDocument): string | undefined {
 	if (!supportedLanguageIds.has(document.languageId)
 		|| !supportedExtensions.has(path.posix.extname(document.uri.path).toLowerCase())) {
 		return 'LangClarity MVP supports TypeScript and JavaScript files (.ts, .tsx, .js, and .jsx).';
 	}
 	if (document.uri.scheme !== 'file') {
 		return 'LangClarity requires a saved file inside the current workspace.';
+	}
+	return undefined;
+}
+
+export function sourceEligibilityError(document: vscode.TextDocument): string | undefined {
+	const accessError = sourceAccessError(document);
+	if (accessError) {
+		return accessError;
 	}
 
 	const text = document.getText();
@@ -209,10 +201,7 @@ export function renderInterpretation(input: RenderInterpretationInput): string {
 	const behavior = result.behavior.length === 0
 		? '_None identified._'
 		: result.behavior.map((item, index) => {
-			const symbol = item.evidence.symbolName.length > 0
-				? `; symbol \`${escapeMarkdown(item.evidence.symbolName)}\``
-				: '';
-			return `${index + 1}. ${escapeMarkdown(item.statement)} _(${item.evidence.startLine}–${item.evidence.endLine}${symbol})_`;
+			return `${index + 1}. ${escapeMarkdown(item.statement)} _(${item.sourceLine}–${item.sourceLine})_`;
 		}).join('\n');
 
 	const body = [
@@ -256,7 +245,7 @@ export function renderInterpretation(input: RenderInterpretationInput): string {
 		sourceHash: input.sourceHash,
 		editableEnglishHash: hashEditableBody(body),
 		languageId: input.languageId,
-		promptVersion: '1',
+		promptVersion: '6',
 		model: input.model,
 		interpretedAt: input.interpretedAt,
 	}, body);

@@ -7,6 +7,7 @@ import {
 	parseEnglishDocument,
 } from '../englishDocument';
 import { hashText, renderInterpretation, type InterpretationResult } from '../interpretation';
+import { validateProposalRefresh } from '../proposalCoordinator';
 import { syncCommandForState } from '../sessionCoordinator';
 
 const result: InterpretationResult = {
@@ -14,7 +15,7 @@ const result: InterpretationResult = {
 	responsibilities: ['Create a greeting.'],
 	behavior: [{
 		statement: 'Return the greeting.',
-		evidence: { startLine: 1, endLine: 1, symbolName: 'greet' },
+		sourceLine: 1,
 	}],
 	sideEffects: [],
 	constraints: [],
@@ -118,5 +119,25 @@ suite('English document', () => {
 		assert.strictEqual(syncCommandForState('ENGLISH_CHANGED'), 'langclarity.englishToCode');
 		assert.strictEqual(syncCommandForState('BOTH_CHANGED'), 'langclarity.chooseSyncDirection');
 		assert.strictEqual(syncCommandForState('SYNCED'), undefined);
+	});
+
+	test('accepts a complete proposal refresh only for the proposed source pair', () => {
+		const markdown = rendered();
+		const parsed = parseEnglishDocument(markdown);
+		const expected = {
+			sourceHash: parsed.frontmatter.sourceHash,
+			source: parsed.frontmatter.source,
+			languageId: parsed.frontmatter.languageId,
+		};
+
+		assert.doesNotThrow(() => validateProposalRefresh(markdown, expected));
+		assert.throws(
+			() => validateProposalRefresh(markdown, { ...expected, sourceHash: hashText('different source') }),
+			/does not match the proposed source/u,
+		);
+		assert.throws(
+			() => validateProposalRefresh(markdown, { ...expected, source: 'src/other.ts' }),
+			/does not match the proposed source/u,
+		);
 	});
 });

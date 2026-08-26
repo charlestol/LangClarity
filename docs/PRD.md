@@ -147,7 +147,7 @@ As a developer, I keep my current code and English when Codex, parsing, validati
 ```text
 Install LangClarity
   → Open a supported source file
-  → Run “LangClarity: Open English View”
+  → Run “LangClarity: Open Interpretation”
   → See that no interpretation exists
   → Select “Interpret File”
   → Connect to Codex
@@ -170,10 +170,12 @@ Edit English
   → Validate syntax and collect diagnostics
   → Preview the source diff
   → Apply or Cancel
-  → On Apply, write atomically and mark SYNCED
+  → On Apply, regenerate the complete interpretation from the proposed source
+  → Atomically apply proposed source and refreshed interpretation
+  → Mark SYNCED
 ```
 
-Invalid syntax blocks ordinary application. TypeScript diagnostics warn but may allow **Apply Anyway**. Cancellation or failure leaves both current representations unchanged.
+Invalid syntax blocks ordinary application. TypeScript diagnostics warn but may allow **Apply Anyway**. If the complete interpretation cannot be refreshed after approval, neither document is applied. Cancellation or failure leaves both current representations unchanged.
 
 ### 9.3 Code → English
 
@@ -189,7 +191,7 @@ Edit or externally change source
 ### 9.4 Cached interpretation
 
 ```text
-Open English View
+Open Interpretation
   → Load cached interpretation
   → Compare cached source hash with current source hash
   → If equal: show current English
@@ -212,22 +214,28 @@ Before starting, the UI warns that unsynchronized changes on the losing side may
 ### 10.1 Entry and onboarding
 
 - Opening a source file alone must not invoke Codex.
-- The extension contributes a discoverable command such as **LangClarity: Open English View**.
+- The extension contributes a discoverable **LangClarity: Open Interpretation** command and a source-file context submenu in the editor and Explorer.
 - An uninterpreted file shows an empty state with an **Interpret File** action.
 - Unsupported file types explain that MVP supports TypeScript and JavaScript.
 - Missing Codex, required authentication, and exhausted usage are explicit actionable states. Other failures returned by Codex display Codex's message without LangClarity parsing or reclassifying it.
 
 ### 10.2 Two-pane experience
 
-- English and the ordinary VS Code source editor should be visible side by side where practical.
+- A LangClarity interpretation pane and the ordinary VS Code source editor should be visible side by side where practical.
 - The source remains a normal VS Code document with its existing language services, Git integration, and editor behavior.
-- English is editable and visually preserves indentation/hierarchy.
+- The pane presents English Code as one editable text surface with a VS Code-like gutter containing every source line number. When synchronized, it has exactly one logical English row per source line: row N translates only source line N, blank source lines produce blank English rows, and neither side has missing, combined, duplicated, or reordered rows. Generated statements use the shortest clear everyday wording, normally one clause per row. Parent rows and indentation carry context so child rows avoid repetition; readable fragments are allowed. Visible literal values remain verbatim, unavoidable technical terms are explained, and identifiers appear only when they aid exact correspondence. Enter inserts an English row and shifts the current and following content and gutter positions down by one.
+- The English Code surface supports ordinary editor interactions including selection, undo/redo, clipboard and find behavior, Tab/Shift+Tab indentation, clickable line navigation, active-line indication, synchronized gutter scrolling, save shortcuts, and line/column status.
+- The remaining interpretation sections are grouped into read-only Overview, Structure, and Effects tabs.
+- Pane edits modify only the Behavior section of the backing Markdown text document and use normal VS Code dirty, save, and undo behavior.
+- The backing Markdown remains directly openable for inspection, interoperability, and repair.
 - The view identifies the source file whose English representation is open.
 - The interface must not imply that changes are synchronized before a successful explicit operation.
 
 ### 10.3 Synchronization controls
 
 - Both **English → Code** and **Code → English** actions must be visible or readily discoverable.
+- The interpretation pane displays only the synchronization direction valid for its current state. It displays a neutral direction chooser for `BOTH_CHANGED`, and no synchronization action for `SYNCED` or invalid content.
+- Saving changed English or source reveals the corresponding apply action in the interpretation pane. If both changed, the pane reveals an explicit direction chooser.
 - The selected direction must be unambiguous in labels, confirmation text, progress, and results.
 - `Cmd/Ctrl+Enter` may invoke sync only if the active pane makes the direction unambiguous.
 - MVP does not include on-save, debounce, idle, or per-keystroke AI sync.
@@ -277,7 +285,7 @@ No interpretation request is made until the developer explicitly asks for one.
 
 ### FR-3: Structured English
 
-Code → English output must preserve logical ordering and hierarchy, remain concise, identify major functions/classes where useful, and retain identifiers when they aid comprehension.
+Code → English output must contain exactly one ordered English Code item per source line. Each item explains only that line in language an everyday person can understand as easily as possible. It uses the shortest unambiguous wording, normally one clause and roughly 12–18 words excluding required literals. Parent rows and indentation carry context, readable fragments are allowed, and repeated subjects or identifiers are omitted when context remains clear. Output preserves visible strings, numbers, booleans, property names, event names, URLs, log labels, and other known values verbatim; leads with meaning rather than syntax; and explains unavoidable technical terms. Blank source lines produce empty statements. Higher-level summaries belong outside English Code.
 
 ### FR-4: Editable English
 
@@ -319,6 +327,8 @@ For English → Code, syntactically invalid output is blocked. Type or language-
 
 No model response, validation result, or apply failure may partially replace code or English. Existing content remains available after failure.
 
+After English → Code approval, LangClarity regenerates all interpretation sections from the proposed source before applying either document. Purpose, Responsibilities, Behavior, generated structure, Side Effects, and Constraints therefore correspond to the synchronized source when the operation reports success.
+
 ### FR-12: External edits
 
 LangClarity observes source-document and filesystem changes and recomputes state. It must distinguish its own applied edit from a new user edit to avoid update loops.
@@ -333,7 +343,7 @@ Before or during initial use, users are told that source submitted for interpret
 
 ### FR-15: Safeguards
 
-LangClarity enforces documented practical file/context limits and rejects unsupported or unsafe operations without corrupting user work.
+LangClarity enforces documented practical file/context limits for model operations and rejects unsupported or unsafe operations without corrupting user work. Existing interpretations remain openable and locally editable when their source exceeds a generation limit.
 
 ### FR-16: Error presentation
 
@@ -377,7 +387,7 @@ English edit
 
 LangClarity should request minimal code changes and use syntax/AST context where useful, but perfect patch minimality is not an MVP guarantee.
 
-Structured-schema validation establishes shape, not semantic truth. An initial live proof produced a schema-valid sentence that contradicted itself about input mutation. Therefore important behavior claims should link to a source symbol or valid source range, deterministic facts such as symbols/imports/exports/verified paths should be derived locally, and prompts should require source-supported claims, mutation precision, contradiction review, and omission when uncertain. Evidence links improve reviewability but do not prove a claim is correct.
+Structured-schema validation establishes shape, not semantic truth. An initial live proof produced a schema-valid sentence that contradicted itself about input mutation. English Code therefore uses exact source-line correspondence, while deterministic facts such as symbols/imports/exports/verified paths are derived locally and prompts require source-supported claims, mutation precision, contradiction review, and omission when uncertain. Line correspondence improves reviewability but does not prove a claim is correct.
 
 ## 13. Privacy and accounts
 
@@ -474,7 +484,7 @@ Score generated English against the source and reference facts for:
 - hierarchy/order accuracy: control flow appears in the correct structure and sequence;
 - unsupported-claim rate: claims that cannot be established from available code;
 - internal-contradiction rate, including conflicting claims across behavior and side-effect sections;
-- evidence-link validity and whether cited ranges actually support their claims;
+- source-line correspondence and whether each English row is supported by its paired source line;
 - staleness behavior: an interpretation is never presented as current after its source hash changes.
 
 Expert review is the initial grading method. Deterministic checks should grade paths, symbols, mappings, hashes, and relationships where possible.

@@ -11,6 +11,10 @@ import {
 	parseEnglishDocument,
 } from './englishDocument';
 import {
+	InterpretationViewProvider,
+	interpretationViewType,
+} from './interpretationViewProvider';
+import {
 	englishUriFor,
 	hashText,
 	MAX_SOURCE_BYTES,
@@ -18,6 +22,7 @@ import {
 	lineCount,
 	relativeSourcePath,
 	renderInterpretation,
+	sourceAccessError,
 	sourceEligibilityError,
 } from './interpretation';
 import {
@@ -41,6 +46,8 @@ interface SyncCommandOptions {
 	sourceUri?: vscode.Uri;
 }
 
+type SourceCommandInput = vscode.Uri | SyncCommandOptions | undefined;
+
 export function activate(context: vscode.ExtensionContext): void {
 	const output = vscode.window.createOutputChannel('LangClarity');
 	const interpreter = new CodexInterpreter();
@@ -48,14 +55,21 @@ export function activate(context: vscode.ExtensionContext): void {
 	const sessions = new SessionCoordinator(output);
 	const lifecycle = new PairedFileLifecycle(sessions, output);
 	const proposals = new ProposalCoordinator(sessions, output);
+	const commandVisibility = registerCommandVisibility();
 
 	context.subscriptions.push(
 		output,
+		commandVisibility,
 		sessions,
 		lifecycle,
 		proposals,
-		vscode.commands.registerCommand('langclarity.selectModel', async () => {
-			const source = activeWorkspaceSource();
+		vscode.window.registerCustomEditorProvider(
+			interpretationViewType,
+			new InterpretationViewProvider(sourceUriForEnglishDocument),
+			{ webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false },
+		),
+		vscode.commands.registerCommand('langclarity.selectModel', async (input?: SourceCommandInput) => {
+			const source = await workspaceSource(input, false);
 			if (!source) {
 				return;
 			}
@@ -78,18 +92,18 @@ export function activate(context: vscode.ExtensionContext): void {
 					'LangClarity could not load available Codex models.',
 				);
 				if (retry) {
-					await vscode.commands.executeCommand('langclarity.selectModel');
+					await vscode.commands.executeCommand('langclarity.selectModel', { sourceUri: source.document.uri });
 				}
 			}
 		}),
-		vscode.commands.registerCommand('langclarity.openEnglishView', async () => {
-			const source = activeWorkspaceSource();
+		vscode.commands.registerCommand('langclarity.openEnglishView', async (input?: SourceCommandInput) => {
+			const source = await workspaceSource(input, false);
 			if (!source) {
 				return;
 			}
 			const englishUri = englishUriFor(source.workspace.uri, source.document.uri);
 			if (await uriExists(englishUri)) {
-				await openBeside(englishUri);
+				await openInterpretationBeside(englishUri);
 				await loadSessionAndReport(sessions, source.document.uri, englishUri);
 				return;
 			}
@@ -99,11 +113,24 @@ export function activate(context: vscode.ExtensionContext): void {
 				'Interpret File',
 			);
 			if (action === 'Interpret File') {
-				await vscode.commands.executeCommand('langclarity.interpretFile');
+				await vscode.commands.executeCommand('langclarity.interpretFile', { sourceUri: source.document.uri });
 			}
 		}),
-		vscode.commands.registerCommand('langclarity.interpretFile', async () => {
-			const source = activeWorkspaceSource();
+		vscode.commands.registerCommand('langclarity.openMarkdown', async (input?: SourceCommandInput) => {
+			const source = await workspaceSource(input, false);
+			if (!source) {
+				return;
+			}
+			const englishUri = englishUriFor(source.workspace.uri, source.document.uri);
+			if (!await uriExists(englishUri)) {
+				await vscode.window.showInformationMessage('No English interpretation exists for this file.');
+				return;
+			}
+			await openMarkdownBeside(englishUri);
+			await loadSessionAndReport(sessions, source.document.uri, englishUri);
+		}),
+		vscode.commands.registerCommand('langclarity.interpretFile', async (input?: SourceCommandInput) => {
+			const source = await workspaceSource(input, true);
 			if (!source) {
 				return;
 			}
@@ -123,10 +150,10 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (await uriExists(englishUri)) {
 				const action = await vscode.window.showInformationMessage(
 					'An English interpretation already exists for this file.',
-					'Open English View',
+					'Open Interpretation',
 				);
-				if (action === 'Open English View') {
-					await openBeside(englishUri);
+				if (action === 'Open Interpretation') {
+					await openInterpretationBeside(englishUri);
 					await loadSessionAndReport(sessions, source.document.uri, englishUri);
 				}
 				return;
@@ -189,7 +216,7 @@ export function activate(context: vscode.ExtensionContext): void {
 					await writeNewFileAtomically(englishUri, markdown);
 				});
 				output.appendLine(`interpret:completed file=${fileName}`);
-				await openBeside(englishUri);
+				await openInterpretationBeside(englishUri);
 				await loadSessionAndReport(sessions, source.document.uri, englishUri);
 			} catch (error) {
 				if (error instanceof vscode.CancellationError) {
@@ -208,12 +235,15 @@ export function activate(context: vscode.ExtensionContext): void {
 				pendingSources.delete(sourceKey);
 			}
 			if (retryRequested) {
-				await vscode.commands.executeCommand('langclarity.interpretFile');
+				await vscode.commands.executeCommand('langclarity.interpretFile', { sourceUri: source.document.uri });
 			}
 		}),
-		vscode.commands.registerCommand('langclarity.chooseSyncDirection', async () => {
+		vscode.commands.registerCommand('langclarity.chooseSyncDirection', async (input?: SourceCommandInput) => {
+			const options = syncCommandOptions(input);
 			try {
-				const capture = await sessions.captureActive();
+				const capture = options.sourceUri
+					? await captureForSourceCommand(sessions, options.sourceUri)
+					: await sessions.captureActive();
 				if (!capture) {
 					await vscode.window.showErrorMessage('Open a LangClarity English view before choosing a synchronization direction.');
 					return;
@@ -229,26 +259,33 @@ export function activate(context: vscode.ExtensionContext): void {
 					'English → Code',
 				);
 				if (direction === 'Code → English') {
-					await vscode.commands.executeCommand('langclarity.codeToEnglish', { authorityConfirmed: true });
+					await vscode.commands.executeCommand('langclarity.codeToEnglish', {
+						authorityConfirmed: true,
+						sourceUri: options.sourceUri,
+					});
 				} else if (direction === 'English → Code') {
-					await vscode.commands.executeCommand('langclarity.englishToCode', { authorityConfirmed: true });
+					await vscode.commands.executeCommand('langclarity.englishToCode', {
+						authorityConfirmed: true,
+						sourceUri: options.sourceUri,
+					});
 				}
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'LangClarity could not determine synchronization state.';
 				await vscode.window.showErrorMessage(message);
 			}
 		}),
-		vscode.commands.registerCommand('langclarity.englishToCode', async (options?: SyncCommandOptions) => {
+		vscode.commands.registerCommand('langclarity.englishToCode', async (input?: SourceCommandInput) => {
+			const options = syncCommandOptions(input);
 			let sourceKey: string | undefined;
 			let retrySourceUri: vscode.Uri | undefined;
 			let fileName = 'source file';
 			let retryRequested = false;
 			try {
-				const capture = options?.sourceUri
-					? await sessions.captureForSource(options.sourceUri)
+				const capture = options.sourceUri
+					? await captureForSourceCommand(sessions, options.sourceUri)
 					: await sessions.captureActive();
 				if (!capture) {
-					await vscode.window.showErrorMessage('Open a LangClarity English view before requesting English → Code.');
+					await offerMissingInterpretation(options.sourceUri, 'requesting English → Code');
 					return;
 				}
 				retrySourceUri = capture.sourceUri;
@@ -261,7 +298,7 @@ export function activate(context: vscode.ExtensionContext): void {
 					await vscode.window.showErrorMessage('The source changed, but English did not. English → Code requires an English edit.');
 					return;
 				}
-				if (capture.state === 'BOTH_CHANGED' && !options?.authorityConfirmed) {
+				if (capture.state === 'BOTH_CHANGED' && !options.authorityConfirmed) {
 					const authority = await vscode.window.showWarningMessage(
 						'Code and English both changed. Continuing makes English authoritative, but current code stays unchanged until you approve the exact diff.',
 						{ modal: true },
@@ -323,7 +360,38 @@ export function activate(context: vscode.ExtensionContext): void {
 					throw new Error('Code or English changed while Codex was creating the proposal. Generate a new proposal.');
 				}
 				output.appendLine(`proposal:ready file=${fileName}`);
-				await proposals.review(capture, result);
+				await proposals.review(capture, result, async (
+					proposedSource,
+					cancellationToken,
+					onRetry,
+				) => {
+					const interpreted = await interpreter.codeToEnglish({
+						source: proposedSource,
+						sourcePath: capture.parsedEnglish.frontmatter.source,
+						languageId: capture.parsedEnglish.frontmatter.languageId,
+						workspacePath: workspace.uri.fsPath,
+						cancellationToken,
+						onRetry,
+						modelPreference: currentModelPreference(context),
+					});
+					await reportModelResolution(context, interpreted);
+					if (cancellationToken.isCancellationRequested) {
+						throw new vscode.CancellationError();
+					}
+					const markdown = renderInterpretation({
+						result: interpreted.document,
+						sourcePath: capture.parsedEnglish.frontmatter.source,
+						sourceHash: hashText(proposedSource),
+						languageId: capture.parsedEnglish.frontmatter.languageId,
+						model: interpreted.model,
+						interpretedAt: new Date().toISOString(),
+					});
+					if (Buffer.byteLength(markdown, 'utf8') > MAX_ENGLISH_BYTES) {
+						throw new Error('Codex returned an English interpretation larger than the LangClarity MVP limit of 256 KiB.');
+					}
+					parseEnglishDocument(markdown);
+					return markdown;
+				});
 			} catch (error) {
 				if (error instanceof vscode.CancellationError) {
 					output.appendLine(`proposal:cancelled file=${fileName}`);
@@ -346,17 +414,18 @@ export function activate(context: vscode.ExtensionContext): void {
 				await vscode.commands.executeCommand('langclarity.englishToCode', { sourceUri: retrySourceUri });
 			}
 		}),
-		vscode.commands.registerCommand('langclarity.codeToEnglish', async (options?: SyncCommandOptions) => {
+		vscode.commands.registerCommand('langclarity.codeToEnglish', async (input?: SourceCommandInput) => {
+			const options = syncCommandOptions(input);
 			let sourceKey: string | undefined;
 			let retrySourceUri: vscode.Uri | undefined;
 			let fileName = 'source file';
 			let retryRequested = false;
 			try {
-				const capture = options?.sourceUri
-					? await sessions.captureForSource(options.sourceUri)
+				const capture = options.sourceUri
+					? await captureForSourceCommand(sessions, options.sourceUri)
 					: await sessions.captureActive();
 				if (!capture) {
-					await vscode.window.showErrorMessage('Open a LangClarity English view before requesting Code → English.');
+					await offerMissingInterpretation(options.sourceUri, 'requesting Code → English');
 					return;
 				}
 				retrySourceUri = capture.sourceUri;
@@ -369,7 +438,7 @@ export function activate(context: vscode.ExtensionContext): void {
 					await vscode.window.showErrorMessage('English changed, but the source did not. Use English → Code to synchronize this edit.');
 					return;
 				}
-				if (capture.state === 'BOTH_CHANGED' && !options?.authorityConfirmed) {
+				if (capture.state === 'BOTH_CHANGED' && !options.authorityConfirmed) {
 					const authority = await vscode.window.showWarningMessage(
 						'Code and English both changed. Continuing makes code authoritative and replaces the current unsynchronized English only after Codex returns a complete valid interpretation.',
 						{ modal: true },
@@ -470,16 +539,87 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 }
 
-function activeWorkspaceSource(): {
+function registerCommandVisibility(): vscode.Disposable {
+	let revision = 0;
+	let indexRevision = 0;
+	const refresh = async (): Promise<void> => {
+		const currentRevision = ++revision;
+		const document = vscode.window.activeTextEditor?.document;
+		let hasInterpretation = false;
+		if (document && !sourceAccessError(document)) {
+			const workspace = vscode.workspace.getWorkspaceFolder(document.uri);
+			if (workspace) {
+				try {
+					hasInterpretation = await uriExists(englishUriFor(workspace.uri, document.uri));
+				} catch {
+					hasInterpretation = false;
+				}
+			}
+		}
+		if (currentRevision === revision) {
+			await vscode.commands.executeCommand('setContext', 'langclarity.activeHasInterpretation', hasInterpretation);
+		}
+	};
+	const refreshInterpretationIndex = async (): Promise<void> => {
+		const currentRevision = ++indexRevision;
+		const interpretedSourcePaths: Record<string, true> = {};
+		for (const englishUri of await vscode.workspace.findFiles('**/.langclarity/**/*.md')) {
+			const workspace = vscode.workspace.getWorkspaceFolder(englishUri);
+			if (!workspace) {
+				continue;
+			}
+			const relative = path.posix.relative(workspace.uri.path, englishUri.path);
+			const prefix = '.langclarity/';
+			if (!relative.startsWith(prefix) || !relative.endsWith('.md')) {
+				continue;
+			}
+			const sourceUri = vscode.Uri.joinPath(
+				workspace.uri,
+				relative.slice(prefix.length, -'.md'.length),
+			);
+			interpretedSourcePaths[sourceUri.path] = true;
+			interpretedSourcePaths[sourceUri.fsPath] = true;
+		}
+		if (currentRevision === indexRevision) {
+			await vscode.commands.executeCommand(
+				'setContext',
+				'langclarity.interpretedSourcePaths',
+				interpretedSourcePaths,
+			);
+		}
+	};
+	const refreshPairContexts = (): void => {
+		void refresh();
+		void refreshInterpretationIndex();
+	};
+
+	const watcher = vscode.workspace.createFileSystemWatcher('**/.langclarity/**/*.md');
+	const disposables = [
+		watcher,
+		vscode.window.onDidChangeActiveTextEditor(() => void refresh()),
+		watcher.onDidCreate(refreshPairContexts),
+		watcher.onDidDelete(refreshPairContexts),
+	];
+	void refresh();
+	void refreshInterpretationIndex();
+	return vscode.Disposable.from(...disposables);
+}
+
+async function workspaceSource(input: SourceCommandInput, enforceGenerationLimits: boolean): Promise<{
 	document: vscode.TextDocument;
 	workspace: vscode.WorkspaceFolder;
-} | undefined {
-	const document = vscode.window.activeTextEditor?.document;
+} | undefined> {
+	const requestedUri = sourceUriFrom(input);
+	const document = requestedUri
+		? await vscode.workspace.openTextDocument(requestedUri)
+		: vscode.window.activeTextEditor?.document;
 	if (!document) {
 		void vscode.window.showErrorMessage('Open a TypeScript or JavaScript file first.');
 		return undefined;
 	}
-	const eligibilityError = sourceEligibilityError(document);
+	const eligibilityError = enforceGenerationLimits
+		? sourceEligibilityError(document)
+		: sourceAccessError(document);
 	if (eligibilityError) {
 		void vscode.window.showErrorMessage(eligibilityError);
 		return undefined;
@@ -492,7 +632,80 @@ function activeWorkspaceSource(): {
 	return { document, workspace };
 }
 
-async function openBeside(uri: vscode.Uri): Promise<void> {
+function sourceUriFrom(input: SourceCommandInput): vscode.Uri | undefined {
+	if (input instanceof vscode.Uri) {
+		return input;
+	}
+	return input?.sourceUri;
+}
+
+function syncCommandOptions(input: SourceCommandInput): SyncCommandOptions {
+	return input instanceof vscode.Uri ? { sourceUri: input } : input ?? {};
+}
+
+async function captureForSourceCommand(
+	sessions: SessionCoordinator,
+	sourceUri: vscode.Uri,
+): Promise<Awaited<ReturnType<SessionCoordinator['captureForSource']>>> {
+	const existing = await sessions.captureForSource(sourceUri);
+	if (existing) {
+		return existing;
+	}
+	const workspace = vscode.workspace.getWorkspaceFolder(sourceUri);
+	if (!workspace) {
+		return undefined;
+	}
+	const englishUri = englishUriFor(workspace.uri, sourceUri);
+	if (!await uriExists(englishUri)) {
+		return undefined;
+	}
+	const loaded = await sessions.load(sourceUri, englishUri);
+	return loaded.error ? undefined : sessions.captureForSource(sourceUri);
+}
+
+async function offerMissingInterpretation(sourceUri: vscode.Uri | undefined, action: string): Promise<void> {
+	if (!sourceUri) {
+		await vscode.window.showErrorMessage(`Open a LangClarity interpretation before ${action}.`);
+		return;
+	}
+	const workspace = vscode.workspace.getWorkspaceFolder(sourceUri);
+	const exists = workspace
+		? await uriExists(englishUriFor(workspace.uri, sourceUri))
+		: false;
+	const button = exists ? 'Open Interpretation' : 'Interpret File';
+	const selected = await vscode.window.showInformationMessage(
+		exists
+			? `Open this file's LangClarity interpretation before ${action}.`
+			: `No LangClarity interpretation exists for this file.`,
+		button,
+	);
+	if (selected === button) {
+		await vscode.commands.executeCommand(
+			exists ? 'langclarity.openEnglishView' : 'langclarity.interpretFile',
+			{ sourceUri },
+		);
+	}
+}
+
+function sourceUriForEnglishDocument(document: vscode.TextDocument): vscode.Uri {
+	const workspace = vscode.workspace.getWorkspaceFolder(document.uri);
+	if (!workspace) {
+		throw new Error('The interpretation is no longer inside a workspace.');
+	}
+	const parsed = parseEnglishDocument(document.getText());
+	return vscode.Uri.joinPath(workspace.uri, ...parsed.frontmatter.source.split('/'));
+}
+
+async function openInterpretationBeside(uri: vscode.Uri): Promise<void> {
+	await vscode.commands.executeCommand(
+		'vscode.openWith',
+		uri,
+		interpretationViewType,
+		{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: false, preview: false },
+	);
+}
+
+async function openMarkdownBeside(uri: vscode.Uri): Promise<void> {
 	const document = await vscode.workspace.openTextDocument(uri);
 	await vscode.window.showTextDocument(document, {
 		viewColumn: vscode.ViewColumn.Beside,
@@ -517,7 +730,7 @@ async function loadSessionAndReport(
 			'Refresh Code → English',
 		);
 		if (action === 'Refresh Code → English') {
-			await vscode.commands.executeCommand('langclarity.codeToEnglish');
+			await vscode.commands.executeCommand('langclarity.codeToEnglish', { sourceUri });
 		}
 	}
 }

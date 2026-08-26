@@ -6,6 +6,7 @@ LangClarity is a preview VS Code extension that gives a TypeScript or JavaScript
 
 - Interprets `.ts`, `.tsx`, `.js`, and `.jsx` files into structured Markdown.
 - Stores English at `.langclarity/<source-path-and-extension>.md`.
+- Opens a focused interpretation pane with editable English Code and read-only supporting context.
 - Detects whether code, English, or both changed since the last successful synchronization.
 - Refreshes English from code only on **Code → English**.
 - Proposes code from edited English on **English → Code**, shows the exact VS Code diff, validates syntax, and waits for explicit approval.
@@ -26,12 +27,14 @@ The MVP is verified on macOS. It uses the Codex executable bundled with `/Applic
 
 1. Open a project folder in VS Code.
 2. Open a supported TypeScript or JavaScript source file.
-3. Open the Command Palette with `Cmd+Shift+P` on macOS or `Ctrl+Shift+P` on Windows/Linux.
-4. Run **LangClarity: Open English View**.
+3. Right-click the source in the editor or Explorer and open the **LangClarity** submenu. You can also use the Command Palette with `Cmd+Shift+P` on macOS or `Ctrl+Shift+P` on Windows/Linux.
+4. Run **LangClarity: Open Interpretation**.
 5. If no English file exists, choose **Interpret File**.
 6. Review the provider disclosure, then continue.
 
-The source and native Markdown editors open side by side. The LangClarity status-bar item reports the current synchronization state and is keyboard-accessible through VS Code's standard status-bar navigation.
+The source and LangClarity interpretation pane open side by side. Its English Code tab is one editable, editor-like text surface with a left gutter containing every source line number. When synchronized, source line N and English row N are an exact pair, so both sides have the same number of logical lines. Generated English Code uses the shortest clear everyday wording, normally one clause per row. Parent rows and indentation carry context so child rows do not repeat subjects or identifiers. Readable fragments are allowed, while visible literal values remain verbatim and unavoidable technical terms are explained. Blank source lines produce blank English rows; no generated row summarizes, reorders, or absorbs another source line. Enter inserts an English row and shifts the current and following content and gutter positions down like a source-line insertion. The editor supports native selection, undo/redo, copy/paste and find behavior, two-space Tab/Shift+Tab indentation, clickable line numbers, active-line highlighting, synchronized scrolling, save shortcuts, and line/column status. Overview, Structure, and Effects provide higher-level read-only summaries. Edits update the backing Markdown text document and participate in normal save and undo behavior. The pane shows only the synchronization action valid for its current state, or a direction chooser when both representations changed; synchronized or invalid panes show no sync action. Use **Open Markdown** in the pane when you need to inspect or repair the raw file.
+
+The source-file context menu and Command Palette hide actions that do not apply to the active file. A source without a paired document offers **Interpret File**; a source with one offers **Open Interpretation** and synchronization actions. Generic Markdown and unsupported files do not expose source synchronization commands. The LangClarity status-bar item reports the current synchronization state and is keyboard-accessible through VS Code's standard status-bar navigation.
 
 To choose a model, run **LangClarity: Select Codex Model and Reasoning** from a supported source file. The selector contains only visible models returned by your local Codex runtime. The default is the current Codex default; `medium` is recommended for Code → English when the selected model supports it.
 
@@ -39,7 +42,7 @@ To choose a model, run **LangClarity: Select Codex Model and Reasoning** from a 
 
 - **Synced:** edit either representation.
 - **Code changed:** run **LangClarity: Code → English** to replace stale English after a complete validated response.
-- **English changed:** run **LangClarity: English → Code**, review the diff, then choose Apply or Cancel.
+- **English changed:** run **LangClarity: English → Code**, review the diff, then choose Apply or Cancel. After approval, LangClarity refreshes the complete interpretation from the proposed source and applies both documents together; every pane tab therefore describes the synchronized code.
 - **Both changed:** activate the status item and choose an authoritative direction. Cancel leaves both files untouched.
 - **Invalid English:** repair the malformed Markdown or restore the last valid file before synchronizing.
 
@@ -63,8 +66,9 @@ Codex sign-in and account policy behavior are documented in the [official OpenAI
 
 ## MVP limits
 
-- Source: at most 75 KiB and 2,000 lines.
-- English: at most 256 KiB.
+- Code → English and English → Code model operations accept source files up to 75 KiB and 2,000 lines.
+- Model operations accept English documents up to 256 KiB where applicable.
+- Existing interpretations remain openable and locally editable even when their source exceeds a model-operation limit.
 - Structured runtime message: at most 2 MiB.
 - Concurrent operations: one per file and two globally.
 - Request timeout: three minutes.
@@ -85,11 +89,11 @@ Run `codex login`, complete the browser flow, and retry the LangClarity action. 
 
 ### The command is not visible
 
-Open a saved `.ts`, `.tsx`, `.js`, or `.jsx` file inside the current workspace. **English → Code** is shown when a Markdown editor is active; **Open English View** and model selection are shown for supported source files.
+Open or right-click a saved `.ts`, `.tsx`, `.js`, or `.jsx` file inside the current workspace. Supported source files expose a **LangClarity** context submenu; the Command Palette exposes **Open Interpretation** and model selection.
 
 ### The status does not update
 
-Make sure the source/English pair has been opened through **LangClarity: Open English View**. Open-document edits are detected immediately; external changes are detected after the filesystem write is observed.
+Make sure the source/English pair has been opened through **LangClarity: Open Interpretation**. Open-document edits are detected immediately; external changes are detected after the filesystem write is observed.
 
 ### A proposal cannot be applied
 

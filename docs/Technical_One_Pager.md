@@ -15,7 +15,7 @@ This is a pre-development design with the Codex integration gate completed. On 2
 5. **Treat external edits as normal.** VS Code, Git, extensions, and filesystem tools may all change source.
 6. **Keep abstractions proportional to MVP.** Isolate Codex behind two operations, but do not build a provider marketplace or semantic IR.
 7. **Prefer inspectable files over hidden state.** The Markdown under `.langclarity/` is the English representation and is readable by developers and filesystem-capable agents.
-8. **Prefer coarse mappings that work.** Function/block/source-range mappings are useful; permanent identity for every sentence or AST node is not required.
+8. **Keep English Code line-aligned.** When synchronized, source line N and English row N are an exact pair. Stable AST identity is not required.
 
 ## 3. Assumptions and decisions to validate
 
@@ -286,7 +286,7 @@ schemaVersion: 1
 source: src/users.ts
 sourceHash: sha256:...
 languageId: typescript
-promptVersion: 1
+promptVersion: 6
 model: codex-default
 interpretedAt: 2026-08-22T00:00:00Z
 ---
@@ -306,14 +306,10 @@ Select the highest-scoring active US users.
 
 ## Behavior
 
-### `getTopUsers`
-
-1. Get the users.
-2. Keep users who:
-   - are active;
-   - are located in the US.
-3. Sort by score, highest first.
-4. Return the first 10.
+1. Make `getTopUsers` available to other files. _(1–1)_
+2. Ask `getUsers` for the users and remember the result. _(2–2)_
+3. Keep only people whose active setting is exactly `true` and whose country is exactly "US". _(3–3)_
+4. Give back the first 10 matching people. _(4–4)_
 
 ## Symbols
 ## Dependencies
@@ -347,15 +343,8 @@ interface EnglishDocument {
 }
 
 interface EnglishBlock {
-  text: string;
-  depth: number;
-  evidence?: SourceEvidence;
-}
-
-interface SourceEvidence {
-  startLine?: number;
-  endLine?: number;
-  symbolName?: string;
+  sourceLine: number;
+  statement: string;
 }
 
 interface SymbolSummary {
@@ -386,16 +375,15 @@ interface RelatedTestMapping {
 
 Validation rules:
 
-- `behavior` is ordered and bounded;
-- text is non-empty plain text with bounded length;
-- depth is a non-negative integer with a practical maximum;
-- important behavior claims include a source symbol or line range when available;
-- ranges, when present, are ordered and fit within the exact numbered source submitted with the request;
-- evidence is an inspectability hint and never proves correctness or authorizes edits by itself;
+- `behavior` contains exactly one item per submitted source line;
+- item N has `sourceLine: N`, with no gaps, duplicates, combinations, or reordering;
+- statements are bounded single-line text, and blank source lines use empty statements;
+- each nonblank statement explains only its paired source line in everyday language and preserves visible literal values verbatim;
+- line correspondence improves inspectability but never proves correctness or authorizes edits by itself;
 - related-test URIs resolve inside the workspace and static paths terminate at the interpreted source file;
 - convention-based test candidates remain visibly distinct from import/path-supported mappings.
 
-Block identity and indentation can be recalculated when synchronization begins. MVP does not require stable sentence or AST-node identity across edits or regenerations.
+Line identity is positional and recalculated when synchronization succeeds. MVP does not require stable AST-node identity across edits or regenerations.
 
 Locally generated sections, such as verified relationship/test evidence, use explicit HTML comment boundaries. They are excluded from the editable-English hash so deterministic refreshes do not incorrectly produce `ENGLISH_CHANGED`:
 
@@ -437,14 +425,21 @@ Test mappings are documentation/navigation hints, not regression detection, cove
 Code → English requests should instruct Codex to:
 
 - preserve logical hierarchy, ordering, and control flow;
-- remain concise and editable;
+- return exactly one ordered Behavior item per numbered source line, with the same line number;
+- explain only that source line in language an everyday person can understand as easily as possible;
+- use the shortest unambiguous wording, normally one clause and roughly 12–18 words excluding required literals;
+- let parent rows and indentation carry context, allow readable fragments, and omit repeated subjects or identifiers when context remains clear;
+- preserve visible strings, numbers, booleans, property names, event names, URLs, log labels, and other known values verbatim;
+- lead with everyday meaning, explain unavoidable technical terms, and mention identifiers only when useful for exact correspondence;
+- use familiar plain-English control-flow phrases while avoiding formal pseudocode keywords, arrows, symbolic operators, vague summaries, and programming syntax as sentence structure;
+- use two-space indentation to represent nested control flow;
 - avoid generic narrative prose;
 - include useful identifiers;
 - represent functions/classes recognizably;
 - make only claims supported by the submitted source and prefer omission when uncertain;
 - distinguish mutation of inputs from mutation of temporary or copied values;
 - check behavior, side effects, and constraints for contradictions before returning;
-- attach a source symbol or valid line range to important behavior claims;
+- use an empty statement for each blank source line;
 - return only the required structured result.
 
 LangClarity derives source path/hash, declarations and symbols, imports/exports, resolvable relationships, and optional related-test evidence locally. These deterministic facts may be supplied as context or rendered into generated Markdown sections, but they are not delegated to unconstrained model output.
@@ -619,7 +614,7 @@ This deterministic derivation is preferred to manually mutating a complex state 
 4. Capture source hash and operation ID; set progress overlay.
 5. Optionally parse coarse syntax context; parsing failure may produce a best-effort request.
 6. Send bounded source/context and the structured output schema.
-7. Validate the entire response and mapping ranges.
+7. Validate the entire response, exact line count, and consecutive source-line numbers.
 8. Confirm operation ID and source hash still match.
 9. Render a complete Markdown document to a temporary/in-memory value, recheck the source base, and write it to the paired path.
 10. Open/publish the Markdown document and `SYNCED` state.
@@ -743,10 +738,11 @@ At all times:
 3. Synchronized baselines change only after a complete successful synchronization/apply.
 4. A pending or failed request never erases the current Markdown document.
 5. Cancellation, authentication-required, usage-limited, Codex-error, and LangClarity-error outcomes preserve current source, English, and synchronized baselines.
+6. A successful synchronization refreshes the complete interpretation; no pane section is carried forward merely by advancing its baseline hash.
 
 ## 14. Large, generated, and incomplete files
 
-Start with these code-level guardrails and adjust them only from Phase 0 evidence:
+Start with these model-operation guardrails and adjust them only from Phase 0 evidence:
 
 - source size: at most 75 KiB and 2,000 lines, whichever is reached first;
 - static dependency path: at most four edges;
@@ -758,7 +754,7 @@ Start with these code-level guardrails and adjust them only from Phase 0 evidenc
 
 Do not expose settings for these values initially. A clear unsupported message is enough for the proof of concept.
 
-When a file is over the limit, show a specific non-destructive message. Function-level interpretation and chunking are later features.
+When a model operation is over the limit, show a specific non-destructive message. Existing interpretations remain openable and locally editable. Function-level interpretation and chunking are later features.
 
 Incomplete or invalid current source may be interpreted best-effort. If Codex or parsing cannot produce a trustworthy complete English result, retain the old English and offer retry. Never attempt arbitrary structure-editor recovery.
 
@@ -819,7 +815,7 @@ Cover deterministic logic heavily:
 - Markdown parse/render round trips and generated-section exclusion;
 - sync-state derivation for all hash combinations;
 - stale async response rejection;
-- structured response validation and range checks;
+- structured response validation, exact line-count parity, consecutive line numbers, and persisted blank rows;
 - supported-file and size-limit checks;
 - parser/validation behavior for TS, JS, TSX, JSX, and incomplete fixtures;
 - optionally, related-test classification, bounded dependency traversal, evidence paths, and convention fallback;
@@ -847,7 +843,7 @@ Use a fake `Interpreter` and temporary fixture workspace to test:
 Run the extension test host against fixture workspaces to verify:
 
 - commands and editor actions;
-- pairing the correct source and native Markdown editor;
+- pairing the correct source and Markdown-backed interpretation pane;
 - document change events and workspace edits;
 - virtual proposal documents and diff commands;
 - persistence across extension-host restart;
@@ -914,9 +910,9 @@ Major tasks:
 
 - generate the official TypeScript VS Code extension scaffold in a temporary directory and merge it without overwriting `docs/`;
 - choose **New Extension (TypeScript)**, npm, and the generator’s unbundled default; keep its test/lint setup and add no UI framework. Consider esbuild only when packaging evidence justifies it;
-- register Open English View and Interpret File commands;
+- register Open Interpretation and Interpret File commands plus the supported-source context submenu;
 - implement supported-file gating and empty/missing-Codex/sign-in/loading/error states;
-- implement `.langclarity/` path mapping, Markdown schema, validation, rendering, and native side-by-side opening;
+- implement `.langclarity/` path mapping, Markdown schema, validation, rendering, and side-by-side interpretation-pane opening;
 - implement the Codex interpreter request for initial interpretation;
 - add redacted output-channel logging.
 
@@ -1044,12 +1040,12 @@ Acceptance criteria:
 | --- | --- | --- | --- | --- |
 | Supported Codex runtime integration is unavailable or unstable | Cannot deliver subscription-based interpreter/auth model | Medium | Phase 0 spike against official supported interface; normalize lifecycle and auth states; avoid depending on terminal scraping | Yes, if no supported path exists |
 | Structured model output is malformed or inconsistent | English cannot render safely; proposals fail | Medium | Strict schemas, bounded retries if justified, response fixtures, prompt evaluation, preserve last good state | No, unless reliability is unusable |
-| Schema-valid English is unsupported or internally contradictory | Users trust a structurally valid but false interpretation | Medium–High | `medium` reasoning recommendation, source-supported prompt rules, evidence-linked behavior claims, local deterministic facts, contradiction benchmark, user review | Product-risk blocker if pilot quality is unusable |
+| Schema-valid English is unsupported or internally contradictory | Users trust a structurally valid but false interpretation | Medium–High | `medium` reasoning recommendation, exact source-line correspondence, source-supported prompt rules, local deterministic facts, contradiction benchmark, user review | Product-risk blocker if pilot quality is unusable |
 | English lacks useful hierarchy or misrepresents code | Users distrust the second surface | Medium–High | Evaluation corpus, prompt/schema iteration, visible staleness, easy Code → English retry, user review | Product-risk blocker if pilot quality is unusable |
 | English → Code rewrites too much source | Diffs are hard to trust and may introduce regressions | Medium–High | Include baseline/current source and mappings, request minimal changes, measure diff size, always preview, cancel/retry | No; may block product validation if pervasive |
 | Source changes while a request or diff is pending | Stale proposal overwrites newer work | High without controls | Operation IDs, base hashes, document versions, final pre-apply hash check | Yes if not mitigated |
 | Source/Markdown watchers form update loops | Repeated state changes or accidental model calls | Medium | One session coordinator, origin/expected-hash tokens, generated-section hash exclusion, model calls only from commands | Yes if destructive; otherwise fix before release |
-| Stored mappings become stale | Wrong context or overly broad proposals | High | Treat mappings as hints, validate ranges, hash whole source, regenerate on Code → English | No |
+| Stored line mappings become stale | Wrong context or proposals | High | Validate exact line parity, hash whole source, regenerate on Code → English | No |
 | Optional related tests are missing or misleading, especially E2E candidates | Users or agents trust incorrect navigation hints | Medium | Separate direct/static-path/convention evidence, cap traversal, never claim completeness or regression detection | No; omit the enrichment if it is not trustworthy |
 | Incomplete or invalid current syntax reduces interpretation quality | Common editing states fail | High | Best-effort requests, clear retryable error, never replace last good English on failure | No |
 | Large/minified files exceed context or stall the extension | Failed calls, latency, resource use | Medium | Byte/line/context/response limits, Phase 0 measurement, clear rejection, no MVP chunking | No |

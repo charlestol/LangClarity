@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import type { CodeChangeResult } from './codexInterpreter';
+import { parseEnglishDocument } from './englishDocument';
 import { hashText } from './hash';
 import { lineCount, MAX_SOURCE_BYTES, MAX_SOURCE_LINES } from './interpretation';
 import {
@@ -26,7 +27,14 @@ interface PendingProposal {
 	summary: string;
 	syntaxErrors: SyntaxIssue[];
 	diagnostics: vscode.Diagnostic[];
+	refreshEnglish: RefreshProposedEnglish;
 }
+
+export type RefreshProposedEnglish = (
+	proposedSource: string,
+	cancellationToken: vscode.CancellationToken,
+	onRetry: () => void,
+) => Promise<string>;
 
 export class ProposalCoordinator implements vscode.Disposable {
 	private readonly provider = new ProposalDocumentProvider();
@@ -43,7 +51,11 @@ export class ProposalCoordinator implements vscode.Disposable {
 		];
 	}
 
-	async review(capture: SessionCapture, result: CodeChangeResult): Promise<void> {
+	async review(
+		capture: SessionCapture,
+		result: CodeChangeResult,
+		refreshEnglish: RefreshProposedEnglish,
+	): Promise<void> {
 		this.discardForSource(capture.sourceUri);
 		const proposedSource = preserveSourceStyle(capture.sourceText, result.proposedSource);
 		if (Buffer.byteLength(proposedSource, 'utf8') > MAX_SOURCE_BYTES
@@ -71,6 +83,7 @@ export class ProposalCoordinator implements vscode.Disposable {
 			summary: result.summary,
 			syntaxErrors: await syntaxIssues(proposedSource, capture.sourceUri.path),
 			diagnostics: [],
+			refreshEnglish,
 		};
 		this.proposalsBySource.set(capture.sourceUri.toString(), proposal);
 		this.provider.set(proposalUri, proposedSource);
@@ -130,12 +143,40 @@ export class ProposalCoordinator implements vscode.Disposable {
 	}
 
 	private async apply(proposal: PendingProposal): Promise<void> {
-		const current = await this.sessions.captureForSource(proposal.sourceUri);
+		let current = await this.sessions.captureForSource(proposal.sourceUri);
 		if (!current
 			|| current.sourceHash !== proposal.baseSourceHash
 			|| current.englishDocumentHash !== proposal.baseEnglishDocumentHash) {
 			this.discard(proposal);
 			throw new Error('Code or English changed after this proposal was created. Generate a new proposal.');
+		}
+		let refreshedEnglish: string;
+		try {
+			refreshedEnglish = await vscode.window.withProgress({
+				location: vscode.ProgressLocation.Notification,
+				title: `LangClarity: Updating the complete interpretation for ${path.posix.basename(proposal.sourceUri.path)}`,
+				cancellable: true,
+			}, async (progress, cancellationToken) => proposal.refreshEnglish(
+				proposal.proposedSource,
+				cancellationToken,
+				() => progress.report({ message: 'Codex is retrying.' }),
+			));
+			validateProposalRefresh(refreshedEnglish, {
+				sourceHash: proposal.proposedSourceHash,
+				source: current.parsedEnglish.frontmatter.source,
+				languageId: current.parsedEnglish.frontmatter.languageId,
+			});
+		} catch (error) {
+			this.discard(proposal);
+			throw error;
+		}
+
+		current = await this.sessions.captureForSource(proposal.sourceUri);
+		if (!current
+			|| current.sourceHash !== proposal.baseSourceHash
+			|| current.englishDocumentHash !== proposal.baseEnglishDocumentHash) {
+			this.discard(proposal);
+			throw new Error('Code or English changed while the interpretation was being refreshed. Generate a new proposal.');
 		}
 
 		const sourceDocument = await vscode.workspace.openTextDocument(proposal.sourceUri);
@@ -154,8 +195,14 @@ export class ProposalCoordinator implements vscode.Disposable {
 			),
 			replacement.newText,
 		);
-		addFrontmatterValueEdit(edit, englishDocument, 'sourceHash', proposal.proposedSourceHash);
-		addFrontmatterValueEdit(edit, englishDocument, 'editableEnglishHash', current.editableEnglishHash);
+		edit.replace(
+			proposal.englishUri,
+			new vscode.Range(
+				englishDocument.positionAt(0),
+				englishDocument.positionAt(englishDocument.getText().length),
+			),
+			refreshedEnglish,
+		);
 
 		const applied = await vscode.workspace.applyEdit(edit);
 		if (!applied) {
@@ -170,7 +217,7 @@ export class ProposalCoordinator implements vscode.Disposable {
 		}
 		this.output.appendLine(`proposal:applied file=${path.posix.basename(proposal.sourceUri.path)}`);
 		this.discard(proposal);
-		await vscode.window.showInformationMessage('LangClarity applied the approved proposal. Save the source and English files when ready.');
+		await vscode.window.showInformationMessage('LangClarity applied the approved proposal and refreshed the complete interpretation. Save the source and English files when ready.');
 	}
 
 	private discardForSource(sourceUri: vscode.Uri): void {
@@ -183,6 +230,18 @@ export class ProposalCoordinator implements vscode.Disposable {
 	private discard(proposal: PendingProposal): void {
 		this.proposalsBySource.delete(proposal.sourceUri.toString());
 		this.provider.delete(proposal.proposalUri);
+	}
+}
+
+export function validateProposalRefresh(
+	markdown: string,
+	expected: { sourceHash: string; source: string; languageId: string },
+): void {
+	const parsed = parseEnglishDocument(markdown);
+	if (parsed.frontmatter.sourceHash !== expected.sourceHash
+		|| parsed.frontmatter.source !== expected.source
+		|| parsed.frontmatter.languageId !== expected.languageId) {
+		throw new Error('The refreshed interpretation does not match the proposed source. Nothing was applied.');
 	}
 }
 
@@ -209,30 +268,6 @@ class ProposalDocumentProvider implements vscode.TextDocumentContentProvider, vs
 		this.changes.dispose();
 		this.documents.clear();
 	}
-}
-
-function addFrontmatterValueEdit(
-	edit: vscode.WorkspaceEdit,
-	document: vscode.TextDocument,
-	key: string,
-	value: string,
-): void {
-	const text = document.getText();
-	const pattern = new RegExp(`^${key}: (.+)$`, 'gmu');
-	const matches = [...text.matchAll(pattern)];
-	if (matches.length !== 1 || matches[0].index === undefined) {
-		throw new Error(`The English document is missing a valid ${key} field.`);
-	}
-	const match = matches[0];
-	const valueOffset = match.index + `${key}: `.length;
-	edit.replace(
-		document.uri,
-		new vscode.Range(
-			document.positionAt(valueOffset),
-			document.positionAt(valueOffset + match[1].length),
-		),
-		JSON.stringify(value),
-	);
 }
 
 async function collectProposalDiagnostics(document: vscode.TextDocument): Promise<vscode.Diagnostic[]> {

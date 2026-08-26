@@ -2,6 +2,18 @@
 
 ## 0.0.1 — MVP preview
 
+- Added editor and Explorer right-click actions for supported source files.
+- Added a Markdown-backed interpretation pane with editable Behavior and read-only supporting tabs.
+- Existing interpretations can now be opened without applying model-operation source limits.
+- English → Code now refreshes every interpretation section from the approved proposed source before applying either document.
+- Replaced Behavior cards with one source-line text editor whose VS Code-style gutter exposes an editable row for every source line.
+- Behavior Enter keypresses now insert a row and shift current and following English content down like a normal text editor.
+- Added editor-style indentation, active-line gutter state, clickable line navigation, and caret position status to Behavior.
+- Saving changed English or source now reveals its applicable synchronization action directly in the interpretation pane.
+- Code → English now produces exactly one concise everyday-language row per source line, carries context through parent rows and indentation, preserves known literal values verbatim, and persists blank aligned rows.
+- Context menus and the Command Palette now hide actions that do not apply to the active file or its interpretation state.
+- The Behavior editor's line-number gutter now grows responsively with the number of displayed digits.
+- Renamed the pane's Behavior label to English Code and replaced permanent sync buttons with one state-valid action.
 - Added persistent Code → English interpretations for TypeScript and JavaScript.
 - Added editable English → Code proposals with syntax validation, VS Code diff review, and explicit apply.
 - Added deterministic synchronized, code-changed, English-changed, and both-changed states.

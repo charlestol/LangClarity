@@ -18,6 +18,8 @@ import {
 	lineCount,
 	relativeSourcePath,
 	renderInterpretation,
+	sourceAccessError,
+	sourceEligibilityError,
 	validateInterpretation,
 } from '../interpretation';
 
@@ -40,28 +42,46 @@ suite('Interpretation', () => {
 		);
 	});
 
-	test('validates evidence against the submitted source', () => {
+	test('requires exactly one ordered English Code item per source line', () => {
 		const valid = {
 			purpose: 'Return a greeting.',
 			responsibilities: ['Create a greeting.'],
 			behavior: [{
 				statement: 'Return the greeting.',
-				evidence: { startLine: 1, endLine: 1, symbolName: 'greet' },
+				sourceLine: 1,
 			}],
 			sideEffects: [],
 			constraints: [],
 		};
 
-		assert.deepStrictEqual(validateInterpretation(valid, 1), valid);
+		assert.deepStrictEqual(validateInterpretation(valid, 'return greeting;'), valid);
+		assert.deepStrictEqual(validateInterpretation({
+			...valid,
+			behavior: [{ statement: '', sourceLine: 1 }],
+		}, ''), {
+			...valid,
+			behavior: [{ statement: '', sourceLine: 1 }],
+		});
 		assert.throws(
 			() => validateInterpretation({
 				...valid,
-				behavior: [{
-					statement: 'Invented behavior.',
-					evidence: { startLine: 1, endLine: 2, symbolName: '' },
-				}],
+				behavior: [],
 			}, 1),
-			/invalid source evidence/u,
+			/invalid interpretation/u,
+		);
+		assert.throws(
+			() => validateInterpretation({
+				...valid,
+				behavior: [{ statement: 'Return the greeting.', sourceLine: 2 }],
+			}, 1),
+			/invalid interpretation/u,
+		);
+		assert.throws(
+			() => validateInterpretation({
+				...valid,
+				behavior: [{ statement: '', sourceLine: 1 }],
+			}, 'return greeting;'),
+			/invalid interpretation/u,
 		);
 		assert.throws(
 			() => validateInterpretation({ ...valid, unsupported: true }, 1),
@@ -74,7 +94,7 @@ suite('Interpretation', () => {
 			result: {
 				purpose: 'Describe [unsafe](command:run).',
 				responsibilities: [],
-				behavior: [],
+				behavior: [{ statement: '', sourceLine: 1 }],
 				sideEffects: [],
 				constraints: [],
 			},
@@ -86,6 +106,7 @@ suite('Interpretation', () => {
 		});
 
 		assert.match(markdown, /schemaVersion: 1/u);
+		assert.match(markdown, /promptVersion: "6"/u);
 		assert.match(markdown, /editableEnglishHash: "sha256:/u);
 		assert.ok(markdown.includes('Describe \\[unsafe\\](command:run).'));
 		assert.match(markdown, /langclarity:generated:start relationships/u);
@@ -94,6 +115,17 @@ suite('Interpretation', () => {
 	test('hashes exact text and counts common newline forms', () => {
 		assert.notStrictEqual(hashText('value'), hashText('value '));
 		assert.strictEqual(lineCount('one\r\ntwo\rthree'), 3);
+	});
+
+	test('allows existing interpretations to be viewed when generation limits are exceeded', () => {
+		const document = {
+			languageId: 'typescript',
+			uri: vscode.Uri.file('/workspace/large.ts'),
+			getText: () => 'x'.repeat(75 * 1024 + 1),
+		} as vscode.TextDocument;
+
+		assert.strictEqual(sourceAccessError(document), undefined);
+		assert.match(sourceEligibilityError(document) ?? '', /75 KiB/u);
 	});
 
 	test('compares the provisional minimum Codex version', () => {

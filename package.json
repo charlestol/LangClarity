@@ -36,6 +36,8 @@
     "onCommand:langclarity.englishToCode",
     "onCommand:langclarity.codeToEnglish",
     "onCommand:langclarity.selectModel",
+    "onCommand:langclarity.openMarkdown",
+    "onCustomEditor:langclarity.interpretationView",
     "workspaceContains:**/.langclarity/**/*.md"
   ],
   "main": "./out/extension.js",
@@ -43,7 +45,7 @@
     "commands": [
       {
         "command": "langclarity.openEnglishView",
-        "title": "Open English View",
+        "title": "Open Interpretation",
         "category": "LangClarity"
       },
       {
@@ -65,29 +67,126 @@
         "command": "langclarity.selectModel",
         "title": "Select Codex Model and Reasoning",
         "category": "LangClarity"
+      },
+      {
+        "command": "langclarity.openMarkdown",
+        "title": "Open Interpretation Markdown",
+        "category": "LangClarity"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "langclarity.sourceActions",
+        "label": "LangClarity"
+      },
+      {
+        "id": "langclarity.explorerSourceActions",
+        "label": "LangClarity"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "langclarity.interpretationView",
+        "displayName": "LangClarity Interpretation",
+        "selector": [
+          {
+            "filenamePattern": "**/.langclarity/**/*.md"
+          }
+        ],
+        "priority": "option"
       }
     ],
     "menus": {
       "commandPalette": [
         {
           "command": "langclarity.openEnglishView",
-          "when": "editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact"
+          "when": "(editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact) && langclarity.activeHasInterpretation"
         },
         {
           "command": "langclarity.interpretFile",
-          "when": "false"
+          "when": "(editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact) && !langclarity.activeHasInterpretation"
         },
         {
           "command": "langclarity.englishToCode",
-          "when": "editorLangId == markdown"
+          "when": "((editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact) && langclarity.activeHasInterpretation) || activeCustomEditorId == langclarity.interpretationView"
         },
         {
           "command": "langclarity.codeToEnglish",
-          "when": "editorLangId == markdown || editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact"
+          "when": "((editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact) && langclarity.activeHasInterpretation) || activeCustomEditorId == langclarity.interpretationView"
         },
         {
           "command": "langclarity.selectModel",
           "when": "editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact"
+        },
+        {
+          "command": "langclarity.openMarkdown",
+          "when": "activeCustomEditorId == langclarity.interpretationView"
+        }
+      ],
+      "editor/context": [
+        {
+          "submenu": "langclarity.sourceActions",
+          "when": "editorLangId == typescript || editorLangId == typescriptreact || editorLangId == javascript || editorLangId == javascriptreact",
+          "group": "navigation@20"
+        }
+      ],
+      "explorer/context": [
+        {
+          "submenu": "langclarity.explorerSourceActions",
+          "when": "resourceExtname == .ts || resourceExtname == .tsx || resourceExtname == .js || resourceExtname == .jsx",
+          "group": "navigation@20"
+        }
+      ],
+      "langclarity.sourceActions": [
+        {
+          "command": "langclarity.openEnglishView",
+          "when": "langclarity.activeHasInterpretation",
+          "group": "1_open@10"
+        },
+        {
+          "command": "langclarity.interpretFile",
+          "when": "!langclarity.activeHasInterpretation",
+          "group": "1_open@20"
+        },
+        {
+          "command": "langclarity.codeToEnglish",
+          "when": "langclarity.activeHasInterpretation",
+          "group": "2_sync@10"
+        },
+        {
+          "command": "langclarity.englishToCode",
+          "when": "langclarity.activeHasInterpretation",
+          "group": "2_sync@20"
+        },
+        {
+          "command": "langclarity.selectModel",
+          "group": "3_settings@10"
+        }
+      ],
+      "langclarity.explorerSourceActions": [
+        {
+          "command": "langclarity.openEnglishView",
+          "when": "resourcePath in langclarity.interpretedSourcePaths",
+          "group": "1_open@10"
+        },
+        {
+          "command": "langclarity.interpretFile",
+          "when": "!(resourcePath in langclarity.interpretedSourcePaths)",
+          "group": "1_open@20"
+        },
+        {
+          "command": "langclarity.codeToEnglish",
+          "when": "resourcePath in langclarity.interpretedSourcePaths",
+          "group": "2_sync@10"
+        },
+        {
+          "command": "langclarity.englishToCode",
+          "when": "resourcePath in langclarity.interpretedSourcePaths",
+          "group": "2_sync@20"
+        },
+        {
+          "command": "langclarity.selectModel",
+          "group": "3_settings@10"
         }
       ]
     }

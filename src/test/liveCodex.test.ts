@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import * as vscode from 'vscode';
 import { CodexInterpreter } from '../codexInterpreter';
-import { hashText, renderInterpretation } from '../interpretation';
+import { hashText, lineCount, renderInterpretation } from '../interpretation';
 
 suite('Live Codex smoke test', () => {
 	test('interprets and proposes code without changing the fixture', async function () {
@@ -34,7 +34,7 @@ suite('Live Codex smoke test', () => {
 			assert.strictEqual(result.unavailableModelId, 'langclarity-unavailable-model');
 			assert.strictEqual(result.model, (models.find((model) => model.isDefault) ?? models[0]).id);
 			assert.ok(result.document.purpose.length > 0);
-			assert.ok(result.document.behavior.length > 0);
+			assert.strictEqual(result.document.behavior.length, lineCount(changedSource));
 			const english = renderInterpretation({
 				result: result.document,
 				sourcePath: 'src/userService.ts',
