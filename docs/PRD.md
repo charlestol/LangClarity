@@ -301,7 +301,7 @@ src/users.ts
 .langclarity/src/users.ts.md
 ```
 
-The Markdown file is the persistent English representation, not a derived third editing surface. It contains versioned metadata and predictable sections for purpose, responsibilities, behavior, symbols, dependencies, related files/tests, side effects, and constraints. LangClarity does not silently add `.langclarity/` to Git ignore rules; teams choose whether these documentation files are version-controlled.
+The Markdown file is the persistent English representation, not a derived third editing surface. It contains versioned metadata and predictable sections for purpose, responsibilities, behavior, key definitions, dependencies, related files/tests, side effects, and constraints. LangClarity does not silently add `.langclarity/` to Git ignore rules; teams choose whether these documentation files are version-controlled.
 
 ### FR-6: Staleness detection
 
@@ -387,7 +387,7 @@ English edit
 
 LangClarity should request minimal code changes and use syntax/AST context where useful, but perfect patch minimality is not an MVP guarantee.
 
-Structured-schema validation establishes shape, not semantic truth. An initial live proof produced a schema-valid sentence that contradicted itself about input mutation. English Code therefore uses exact source-line correspondence, while deterministic facts such as symbols/imports/exports/verified paths are derived locally and prompts require source-supported claims, mutation precision, contradiction review, and omission when uncertain. Line correspondence improves reviewability but does not prove a claim is correct.
+Structured-schema validation establishes shape, not semantic truth. An initial live proof produced a schema-valid sentence that contradicted itself about input mutation. English Code therefore uses exact source-line correspondence, while deterministic facts such as key definitions, imports, exports, and verified paths are derived locally and prompts require source-supported claims, mutation precision, contradiction review, and omission when uncertain. Line correspondence improves reviewability but does not prove a claim is correct.
 
 ## 13. Privacy and accounts
 
@@ -468,7 +468,7 @@ Maintain a versioned benchmark corpus containing representative TypeScript and J
 - straightforward and intentionally non-obvious business rules;
 - different file sizes and complexity levels within MVP limits;
 - incomplete or invalid source examples for failure behavior;
-- expert-authored reference facts for purpose, behavior, symbols, relationships, side effects, and constraints.
+- expert-authored reference facts for purpose, behavior, key definitions, relationships, side effects, and constraints.
 
 Keep a held-out portion that is not used for prompt/schema iteration. Record the source revision, prompt/schema version, interpreter version, and evaluation rubric with every result so regressions can be compared meaningfully.
 
@@ -478,7 +478,7 @@ Score generated English against the source and reference facts for:
 
 - factual claim precision: statements supported by the source;
 - behavior coverage: important reference facts represented;
-- symbol accuracy: correct names and responsibilities;
+- key definition accuracy: correct names and responsibilities;
 - relationship accuracy: correct imports, dependencies, and connected files;
 - when optional test mapping is evaluated, related-test precision and recall scored separately by direct, static-path, and convention evidence;
 - hierarchy/order accuracy: control flow appears in the correct structure and sequence;
@@ -487,7 +487,7 @@ Score generated English against the source and reference facts for:
 - source-line correspondence and whether each English row is supported by its paired source line;
 - staleness behavior: an interpretation is never presented as current after its source hash changes.
 
-Expert review is the initial grading method. Deterministic checks should grade paths, symbols, mappings, hashes, and relationships where possible.
+Expert review is the initial grading method. Deterministic checks should grade paths, key definitions, mappings, hashes, and relationships where possible.
 
 ### 16.4 Human-comprehension benchmark
 
@@ -523,7 +523,7 @@ Evaluate:
 - codebase comprehension-question accuracy;
 - relevant-file retrieval precision and recall;
 - relevant-test retrieval precision and recall;
-- symbol and dependency identification accuracy;
+- key definition and dependency identification accuracy;
 - edit localization: whether the agent changes the correct files and regions;
 - behavioral task success using deterministic tests where available;
 - syntax/type/test pass rates;

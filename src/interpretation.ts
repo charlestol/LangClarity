@@ -208,7 +208,7 @@ export function renderInterpretation(input: RenderInterpretationInput): string {
 		behavior,
 		'',
 		'<!-- langclarity:generated:start relationships -->',
-		'## Symbols',
+		'## Key definitions',
 		'',
 		'## Dependencies',
 		'',

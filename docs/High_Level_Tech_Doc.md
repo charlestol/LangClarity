@@ -89,9 +89,9 @@ Error handling stays intentionally small. Authentication required and usage limi
 
 ## English document contract
 
-Each Markdown file uses versioned frontmatter containing the source path/hash, editable-English hash, language, prompt version, model, and interpretation time. Predictable sections cover purpose, responsibilities, behavior, symbols, dependencies, related files/tests, side effects, and constraints.
+Each Markdown file uses versioned frontmatter containing the source path/hash, editable-English hash, language, prompt version, model, and interpretation time. Predictable sections cover purpose, responsibilities, behavior, key definitions, dependencies, related files/tests, side effects, and constraints.
 
-The model returns structured data with exactly one ordered English Code item per source line; LangClarity validates exact line-count and line-number parity before rendering Markdown. Each item uses the shortest clear everyday wording supported by its paired source line. Parent rows and indentation carry context to avoid repetition, while visible literal values remain verbatim. The Markdown is canonical after creation, including edits made by another coding agent. Symbols, imports, exports, verified paths, and optional test relationships are derived locally and placed in generated sections instead of being trusted as model claims. Stable AST identity is not required.
+The model returns structured data with exactly one ordered English Code item per source line; LangClarity validates exact line-count and line-number parity before rendering Markdown. Each item uses the shortest clear everyday wording supported by its paired source line. Parent rows and indentation carry context to avoid repetition, while visible literal values remain verbatim. The Markdown is canonical after creation, including edits made by another coding agent. Key definitions, imports, exports, verified paths, and optional test relationships are derived locally and placed in generated sections instead of being trusted as model claims. Stable AST identity is not required.
 
 ## Safety and lifecycle invariants
 

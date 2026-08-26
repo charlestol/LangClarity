@@ -110,6 +110,7 @@ suite('Interpretation', () => {
 		assert.match(markdown, /editableEnglishHash: "sha256:/u);
 		assert.ok(markdown.includes('Describe \\[unsafe\\](command:run).'));
 		assert.match(markdown, /langclarity:generated:start relationships/u);
+		assert.match(markdown, /^## Key definitions$/mu);
 	});
 
 	test('hashes exact text and counts common newline forms', () => {

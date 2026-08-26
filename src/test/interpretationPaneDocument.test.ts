@@ -37,9 +37,18 @@ suite('Interpretation pane document', () => {
 		assert.strictEqual(content.behavior[0].evidence, 'Lines 1–1');
 		assert.strictEqual(content.behavior[0].startLine, 1);
 		assert.strictEqual(content.behavior[0].endLine, 1);
-		assert.strictEqual(content.behavior[0].symbolName, undefined);
+		assert.strictEqual(content.behavior[0].definitionName, undefined);
 		assert.strictEqual(content.overview[0].content, 'Return a greeting.');
+		assert.strictEqual(content.structure[0].heading, 'Key definitions');
 		assert.strictEqual(content.effects[1].content, '- The name must be present.');
+	});
+
+	test('presents the legacy section as Key definitions', () => {
+		const legacy = rendered().replace('## Key definitions', '## Symbols');
+		const content = interpretationPaneContent(legacy);
+
+		assert.strictEqual(content.structure[0].heading, 'Key definitions');
+		assert.strictEqual(content.structure[0].content, '');
 	});
 
 	test('preserves exact source-line order including a blank row', () => {

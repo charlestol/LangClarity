@@ -9,7 +9,7 @@ export interface PaneBehaviorItem {
 	evidenceSuffix?: string;
 	startLine?: number;
 	endLine?: number;
-	symbolName?: string;
+	definitionName?: string;
 }
 
 export interface InterpretationPaneContent {
@@ -26,6 +26,9 @@ export function interpretationPaneContent(
 	input: string | ParsedEnglishDocument,
 ): InterpretationPaneContent {
 	const parsed = typeof input === 'string' ? parseEnglishDocument(input) : input;
+	const keyDefinitionsHeading = parsed.body.includes('## Key definitions')
+		? '## Key definitions'
+		: '## Symbols';
 	return {
 		source: parsed.frontmatter.source,
 		model: parsed.frontmatter.model,
@@ -37,7 +40,7 @@ export function interpretationPaneContent(
 			{ heading: 'Responsibilities', content: section(parsed.body, '## Responsibilities', '## Behavior') },
 		],
 		structure: [
-			{ heading: 'Symbols', content: section(parsed.body, '## Symbols', '## Dependencies') },
+			{ heading: 'Key definitions', content: section(parsed.body, keyDefinitionsHeading, '## Dependencies') },
 			{ heading: 'Dependencies', content: section(parsed.body, '## Dependencies', '## Related files') },
 			{ heading: 'Related files', content: section(parsed.body, '## Related files', '## Related tests') },
 			{ heading: 'Related tests', content: section(parsed.body, '## Related tests', '<!-- langclarity:generated:end relationships -->') },
@@ -147,7 +150,7 @@ function parseBehavior(value: string): PaneBehaviorItem[] {
 			...(match[2] ? { evidenceSuffix: match[2] } : {}),
 			...(match[3] ? { startLine: Number(match[3]) } : {}),
 			...(match[4] ? { endLine: Number(match[4]) } : {}),
-			...(match[5] ? { symbolName: unescapeMarkdown(match[5]) } : {}),
+			...(match[5] ? { definitionName: unescapeMarkdown(match[5]) } : {}),
 		};
 	});
 }

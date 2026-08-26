@@ -311,7 +311,7 @@ Select the highest-scoring active US users.
 3. Keep only people whose active setting is exactly `true` and whose country is exactly "US". _(3–3)_
 4. Give back the first 10 matching people. _(4–4)_
 
-## Symbols
+## Key definitions
 ## Dependencies
 ## Related files
 ## Related tests
@@ -323,7 +323,7 @@ Frontmatter keys and section headings are versioned. Empty sections are permitte
 
 ### 7.2 Structured contract
 
-LangClarity composes the document from a validated model response and locally derived facts, then renders it into Markdown. The model response supplies purpose, responsibilities, behavior, side effects, and constraints; source identity, symbols, imports/exports, relationships, and optional test evidence come from local analysis. The parsed form of the complete Markdown document uses this conceptual contract:
+LangClarity composes the document from a validated model response and locally derived facts, then renders it into Markdown. The model response supplies purpose, responsibilities, behavior, side effects, and constraints; source identity, key definitions, imports/exports, relationships, and optional test evidence come from local analysis. The parsed form of the complete Markdown document uses this conceptual contract:
 
 ```ts
 interface EnglishDocument {
@@ -336,7 +336,7 @@ interface EnglishDocument {
   purpose: string;
   responsibilities: string[];
   behavior: EnglishBlock[];
-  symbols: SymbolSummary[];
+  keyDefinitions: KeyDefinitionSummary[];
   relationships: VerifiedRelationship[];
   sideEffects: string[];
   constraints: string[];
@@ -347,7 +347,7 @@ interface EnglishBlock {
   statement: string;
 }
 
-interface SymbolSummary {
+interface KeyDefinitionSummary {
   name: string;
   kind: string;
   responsibility: string;
@@ -367,7 +367,7 @@ interface RelatedTestMapping {
   testUri: string;
   testKind: "unit" | "integration" | "e2e" | "unknown";
   evidence:
-    | { kind: "direct-import"; importedSymbols?: string[] }
+    | { kind: "direct-import"; importedDefinitions?: string[] }
     | { kind: "static-dependency-path"; path: string[] }
     | { kind: "naming-or-location-convention"; convention: string };
 }
@@ -412,7 +412,7 @@ Related-test discovery is optional enrichment and not a core MVP gate. When incl
 
 For each interpreted source file:
 
-1. Mark tests that directly import the file or one of its exported symbols as direct mappings.
+1. Mark tests that directly import the file or one of its exported definitions as direct mappings.
 2. Traverse static import paths from a test toward the source file, capped at four edges. Resolve `tsconfig`/`jsconfig` path aliases where the TypeScript resolver can do so.
 3. Add co-located or convention-matched files such as `*.test.*`, `*.spec.*`, `__tests__`, `test`, and `tests` entries as candidates when no stronger evidence exists.
 4. Recognize common Playwright/Cypress configuration and E2E directories. Because E2E tests often exercise routes without importing implementation modules, label them as candidates unless a static path exists.
@@ -442,7 +442,7 @@ Code → English requests should instruct Codex to:
 - use an empty statement for each blank source line;
 - return only the required structured result.
 
-LangClarity derives source path/hash, declarations and symbols, imports/exports, resolvable relationships, and optional related-test evidence locally. These deterministic facts may be supplied as context or rendered into generated Markdown sections, but they are not delegated to unconstrained model output.
+LangClarity derives source path/hash, key definitions, imports/exports, resolvable relationships, and optional related-test evidence locally. These deterministic facts may be supplied as context or rendered into generated Markdown sections, but they are not delegated to unconstrained model output.
 
 The POC uses one interpretation call. Do not add a second critic/review call until repeated corpus measurements show that it materially improves semantic fidelity enough to justify the additional latency and usage.
 
