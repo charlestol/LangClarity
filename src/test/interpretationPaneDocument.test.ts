@@ -48,7 +48,7 @@ suite('Interpretation pane document', () => {
 		const content = interpretationPaneContent(legacy);
 
 		assert.strictEqual(content.structure[0].heading, 'Key definitions');
-		assert.strictEqual(content.structure[0].content, '');
+		assert.strictEqual(content.structure[0].content, '_None verified._');
 	});
 
 	test('preserves exact source-line order including a blank row', () => {

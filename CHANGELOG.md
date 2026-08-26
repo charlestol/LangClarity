@@ -17,6 +17,7 @@
 - All interpretation tabs now reuse one full-width, content-growing, pane-scrolling layout without horizontal content insets.
 - Renamed the pane's Behavior label to English Code and replaced permanent sync buttons with one state-valid action.
 - Added persistent Code → English interpretations for TypeScript and JavaScript.
+- Interpretation refreshes now populate verified top-level definitions, direct dependencies, and related workspace files from TypeScript module resolution.
 - Added editable English → Code proposals with syntax validation, VS Code diff review, and explicit apply.
 - Added deterministic synchronized, code-changed, English-changed, and both-changed states.
 - Added paired-file move and orphan preservation behavior.

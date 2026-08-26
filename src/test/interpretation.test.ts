@@ -1,4 +1,5 @@
 import * as assert from 'node:assert';
+import path from 'node:path';
 import * as vscode from 'vscode';
 import {
 	AuthenticationRequiredError,
@@ -22,6 +23,7 @@ import {
 	sourceEligibilityError,
 	validateInterpretation,
 } from '../interpretation';
+import { repositoryFactsFor, sourceStructure } from '../repositoryFacts';
 
 suite('Interpretation', () => {
 	test('maps a source path without dropping its extension', () => {
@@ -103,6 +105,12 @@ suite('Interpretation', () => {
 			languageId: 'typescript',
 			model: 'runtime-default',
 			interpretedAt: '2026-08-22T00:00:00.000Z',
+			repositoryFacts: {
+				keyDefinitions: ['Function run (line 1)'],
+				dependencies: ['./dependency → src/dependency.ts (line 1)'],
+				relatedFiles: ['src/dependency.ts (directly imported)'],
+				relatedTests: [],
+			},
 		});
 
 		assert.match(markdown, /schemaVersion: 1/u);
@@ -111,6 +119,40 @@ suite('Interpretation', () => {
 		assert.ok(markdown.includes('Describe \\[unsafe\\](command:run).'));
 		assert.match(markdown, /langclarity:generated:start relationships/u);
 		assert.match(markdown, /^## Key definitions$/mu);
+		assert.match(markdown, /mappingRevisionHash: "sha256:/u);
+		assert.ok(markdown.includes('Function run (line 1)'));
+		assert.ok(markdown.includes('./dependency → src/dependency.ts (line 1)'));
+		assert.ok(markdown.includes('_None verified._'));
+	});
+
+	test('derives top-level definitions and static module references', async () => {
+		const structure = await sourceStructure([
+			"import { value } from './value';",
+			"export type Status = 'ready';",
+			'export function run() { return value; }',
+			'const internal = true;',
+		].join('\n'), 'src/example.ts');
+
+		assert.deepStrictEqual(structure.imports, [{ specifier: './value', line: 1 }]);
+		assert.deepStrictEqual(structure.keyDefinitions, [
+			'Type Status (line 2)',
+			'Function run (line 3)',
+			'Variable internal (line 4)',
+		]);
+	});
+
+	test('resolves direct workspace imports without treating external modules as related files', async () => {
+		const workspaceUri = vscode.Uri.file(path.resolve(__dirname, '..', '..'));
+		const sourceUri = vscode.Uri.joinPath(workspaceUri, 'src', 'example.ts');
+		const facts = await repositoryFactsFor([
+			"import { hashText } from './hash';",
+			"import path from 'node:path';",
+			'export const value = hashText(path.sep);',
+		].join('\n'), sourceUri, workspaceUri);
+
+		assert.deepStrictEqual(facts.relatedFiles, ['src/hash.ts (directly imported)']);
+		assert.ok(facts.dependencies.includes('./hash → src/hash.ts (line 1)'));
+		assert.ok(facts.dependencies.includes('node:path (external or unresolved, line 2)'));
 	});
 
 	test('hashes exact text and counts common newline forms', () => {

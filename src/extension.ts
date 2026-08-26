@@ -39,6 +39,7 @@ import { PairedFileLifecycle } from './pairedFileLifecycle';
 import { ProposalCoordinator } from './proposalCoordinator';
 import { SessionCoordinator } from './sessionCoordinator';
 import type { CodexModel, CodexModelPreference } from './modelSelection';
+import { repositoryFactsFor } from './repositoryFacts';
 
 const disclosureKey = 'langclarity.providerDisclosureAccepted.v2';
 const modelPreferenceKey = 'langclarity.selectedModelId';
@@ -212,10 +213,13 @@ export function activate(context: vscode.ExtensionContext): void {
 					if (source.document.isClosed) {
 						throw new Error('The source was closed or moved while Codex was interpreting it. No English file was written.');
 					}
-					const markdown = renderedEnglishDocument(interpreted, {
+					const markdown = await renderedEnglishDocument(interpreted, {
 						sourcePath,
 						sourceHash,
 						languageId: source.document.languageId,
+						source: sourceText,
+						sourceUri: source.document.uri,
+						workspaceUri: source.workspace.uri,
 					});
 					await writeNewFileAtomically(englishUri, markdown);
 				});
@@ -391,6 +395,9 @@ export function activate(context: vscode.ExtensionContext): void {
 						sourcePath: capture.parsedEnglish.frontmatter.source,
 						sourceHash: hashText(proposedSource),
 						languageId: capture.parsedEnglish.frontmatter.languageId,
+						source: proposedSource,
+						sourceUri: capture.sourceUri,
+						workspaceUri: workspace.uri,
 					});
 				});
 			} catch (error) {
@@ -489,10 +496,13 @@ export function activate(context: vscode.ExtensionContext): void {
 					modelPreference: currentModelPreference(context),
 				}));
 				await reportModelResolution(context, interpreted);
-				const markdown = renderedEnglishDocument(interpreted, {
+				const markdown = await renderedEnglishDocument(interpreted, {
 					sourcePath: capture.parsedEnglish.frontmatter.source,
 					sourceHash: capture.sourceHash,
 					languageId: capture.parsedEnglish.frontmatter.languageId,
+					source: capture.sourceText,
+					sourceUri: capture.sourceUri,
+					workspaceUri: workspace.uri,
 				});
 				const englishDocument = await vscode.workspace.openTextDocument(capture.englishUri);
 				const current = await sessions.captureForSource(capture.sourceUri);
@@ -533,15 +543,26 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 }
 
-function renderedEnglishDocument(
+async function renderedEnglishDocument(
 	interpreted: CodeToEnglishOutput,
-	input: { sourcePath: string; sourceHash: string; languageId: string },
-): string {
+	input: {
+		sourcePath: string;
+		sourceHash: string;
+		languageId: string;
+		source: string;
+		sourceUri: vscode.Uri;
+		workspaceUri: vscode.Uri;
+	},
+): Promise<string> {
+	const repositoryFacts = await repositoryFactsFor(input.source, input.sourceUri, input.workspaceUri);
 	const markdown = renderInterpretation({
 		result: interpreted.document,
-		...input,
+		sourcePath: input.sourcePath,
+		sourceHash: input.sourceHash,
+		languageId: input.languageId,
 		model: interpreted.model,
 		interpretedAt: new Date().toISOString(),
+		repositoryFacts,
 	});
 	if (Buffer.byteLength(markdown, 'utf8') > MAX_ENGLISH_BYTES) {
 		throw new Error('Codex returned an English interpretation larger than the LangClarity MVP limit of 256 KiB.');

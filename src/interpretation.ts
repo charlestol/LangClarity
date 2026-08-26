@@ -3,8 +3,10 @@ import * as vscode from 'vscode';
 import { hashEditableBody, renderFrontmatter } from './englishDocument';
 import { escapeMarkdown } from './markdownText';
 import { isRecord } from './typeGuards';
+import type { RepositoryFacts } from './repositoryFacts';
+import { hashText } from './hash';
 
-export { hashText } from './hash';
+export { hashText };
 
 export const MAX_SOURCE_BYTES = 75 * 1024;
 export const MAX_SOURCE_LINES = 2_000;
@@ -58,6 +60,7 @@ export interface RenderInterpretationInput {
 	languageId: string;
 	model: string;
 	interpretedAt: string;
+	repositoryFacts?: RepositoryFacts;
 }
 
 const supportedLanguageIds = new Set([
@@ -183,8 +186,20 @@ function renderList(items: string[]): string {
 		: items.map((item) => `- ${escapeMarkdown(item)}`).join('\n');
 }
 
+function renderVerifiedList(items: string[]): string {
+	return items.length === 0
+		? '_None verified._'
+		: items.map((item) => `- ${escapeMarkdown(item)}`).join('\n');
+}
+
 export function renderInterpretation(input: RenderInterpretationInput): string {
 	const { result } = input;
+	const repositoryFacts = input.repositoryFacts ?? {
+		keyDefinitions: [],
+		dependencies: [],
+		relatedFiles: [],
+		relatedTests: [],
+	};
 	const behavior = result.behavior.length === 0
 		? '_None identified._'
 		: result.behavior.map((item, index) => {
@@ -210,11 +225,19 @@ export function renderInterpretation(input: RenderInterpretationInput): string {
 		'<!-- langclarity:generated:start relationships -->',
 		'## Key definitions',
 		'',
+		renderVerifiedList(repositoryFacts.keyDefinitions),
+		'',
 		'## Dependencies',
+		'',
+		renderVerifiedList(repositoryFacts.dependencies),
 		'',
 		'## Related files',
 		'',
+		renderVerifiedList(repositoryFacts.relatedFiles),
+		'',
 		'## Related tests',
+		'',
+		renderVerifiedList(repositoryFacts.relatedTests),
 		'<!-- langclarity:generated:end relationships -->',
 		'',
 		'## Side effects',
@@ -231,6 +254,7 @@ export function renderInterpretation(input: RenderInterpretationInput): string {
 		source: input.sourcePath,
 		sourceHash: input.sourceHash,
 		editableEnglishHash: hashEditableBody(body),
+		mappingRevisionHash: hashText(JSON.stringify(repositoryFacts)),
 		languageId: input.languageId,
 		promptVersion: '6',
 		model: input.model,
