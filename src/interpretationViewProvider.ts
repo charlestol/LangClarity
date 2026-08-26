@@ -260,7 +260,7 @@ function paneHtml(webview: vscode.Webview, stylesheetUri: vscode.Uri): string {
 		<button class="tab" data-tab="effects">Effects</button>
 	</nav>
 	<main>
-		<section class="panel active" id="behavior"><div class="behavior-heading"><h2>English Code</h2><span class="behavior-hint">Everyday English, exactly one row per source line</span></div><div class="behavior-editor"><div class="behavior-gutter" id="behavior-gutter" aria-hidden="true"></div><textarea id="behavior-text" rows="1" wrap="off" spellcheck="true" aria-label="Everyday English translation by source line"></textarea></div><div class="editor-status"><span id="cursor-position">Ln 1, Col 1</span><span>Spaces: 2</span><span>Everyday English</span></div></section>
+		<section class="panel active" id="behavior"><div class="behavior-editor"><div class="behavior-gutter" id="behavior-gutter" aria-hidden="true"></div><textarea id="behavior-text" rows="1" wrap="off" spellcheck="true" aria-label="Everyday English translation by source line"></textarea></div><div class="editor-status"><span id="cursor-position">Ln 1, Col 1</span><span>Spaces: 2</span><span>Everyday English</span></div></section>
 		<section class="panel" id="overview"></section>
 		<section class="panel" id="structure"></section>
 		<section class="panel" id="effects"></section>

@@ -11,6 +11,7 @@ import {
 import {
 	parseEnglishDocument,
 } from './englishDocument';
+import { appendLangClarityIgnoreRule, hasLangClarityIgnoreRule } from './gitignore';
 import {
 	InterpretationViewProvider,
 	interpretationViewType,
@@ -29,6 +30,7 @@ import {
 } from './interpretation';
 import {
 	replaceTextDocumentAndSave,
+	assertPathHasNoSymlinks,
 	uriExists,
 	writeNewFileAtomically,
 } from './markdownRepository';
@@ -41,6 +43,8 @@ import type { CodexModel, CodexModelPreference } from './modelSelection';
 const disclosureKey = 'langclarity.providerDisclosureAccepted.v2';
 const modelPreferenceKey = 'langclarity.selectedModelId';
 const reasoningPreferenceKey = 'langclarity.selectedReasoningEffort';
+const gitignoreChoicesKey = 'langclarity.gitignoreChoices.v1';
+type GitignoreChoice = 'dismissed' | 'ignored' | 'trackable';
 interface SyncCommandOptions {
 	authorityConfirmed?: boolean;
 	sourceUri?: vscode.Uri;
@@ -56,6 +60,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	const lifecycle = new PairedFileLifecycle(sessions, output);
 	const proposals = new ProposalCoordinator(sessions, output);
 	const commandVisibility = registerCommandVisibility();
+	const pendingGitignorePrompts = new Set<string>();
 
 	context.subscriptions.push(
 		output,
@@ -128,6 +133,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 			await openMarkdownBeside(englishUri);
 			await loadSessionAndReport(sessions, source.document.uri, englishUri);
+		}),
+		vscode.commands.registerCommand('langclarity.addToGitignore', async () => {
+			const workspace = await selectWorkspaceFolder();
+			if (workspace) {
+				await addToGitignoreAndReport(context, workspace);
+			}
 		}),
 		vscode.commands.registerCommand('langclarity.interpretFile', async (input?: SourceCommandInput) => {
 			const source = await workspaceSource(input, true);
@@ -211,6 +222,11 @@ export function activate(context: vscode.ExtensionContext): void {
 				output.appendLine(`interpret:completed file=${fileName}`);
 				await openInterpretationBeside(englishUri);
 				await loadSessionAndReport(sessions, source.document.uri, englishUri);
+				try {
+					await offerGitignoreChoice(context, source.workspace, pendingGitignorePrompts);
+				} catch {
+					output.appendLine('gitignore:prompt-unavailable');
+				}
 			} catch (error) {
 				if (error instanceof vscode.CancellationError) {
 					output.appendLine(`interpret:cancelled file=${fileName}`);
@@ -598,6 +614,148 @@ function registerCommandVisibility(): vscode.Disposable {
 	void refresh();
 	void refreshInterpretationIndex();
 	return vscode.Disposable.from(...disposables);
+}
+
+async function offerGitignoreChoice(
+	context: vscode.ExtensionContext,
+	workspace: vscode.WorkspaceFolder,
+	pendingPrompts: Set<string>,
+): Promise<void> {
+	const workspaceKey = workspace.uri.toString();
+	if (gitignoreChoices(context)[workspaceKey] || pendingPrompts.has(workspaceKey)) {
+		return;
+	}
+	if (hasLangClarityIgnoreRule(await currentGitignoreContent(workspace) ?? '')) {
+		await setGitignoreChoice(context, workspace, 'ignored');
+		return;
+	}
+
+	pendingPrompts.add(workspaceKey);
+	try {
+		const selected = await vscode.window.showInformationMessage(
+			'LangClarity stores source-derived Markdown in .langclarity/. Should this folder be excluded from Git?',
+			'Add to .gitignore',
+			'Leave trackable',
+		);
+		if (selected === 'Add to .gitignore') {
+			await addToGitignoreAndReport(context, workspace);
+			return;
+		}
+		await setGitignoreChoice(context, workspace, selected === 'Leave trackable' ? 'trackable' : 'dismissed');
+	} finally {
+		pendingPrompts.delete(workspaceKey);
+	}
+}
+
+async function selectWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {
+	const folders = vscode.workspace.workspaceFolders ?? [];
+	if (folders.length === 0) {
+		await vscode.window.showErrorMessage('Open a workspace folder before updating .gitignore.');
+		return undefined;
+	}
+	if (folders.length === 1) {
+		return folders[0];
+	}
+	const selected = await vscode.window.showQuickPick(
+		folders.map((workspace) => ({
+			label: workspace.name,
+			description: workspace.uri.fsPath,
+			workspace,
+		})),
+		{ placeHolder: 'Choose the workspace folder whose .gitignore should be updated' },
+	);
+	return selected?.workspace;
+}
+
+async function addToGitignoreAndReport(
+	context: vscode.ExtensionContext,
+	workspace: vscode.WorkspaceFolder,
+): Promise<void> {
+	try {
+		const result = await addLangClarityToGitignore(workspace);
+		await setGitignoreChoice(context, workspace, 'ignored');
+		if (result === 'pending-save') {
+			await vscode.window.showInformationMessage('Added /.langclarity/ to the open .gitignore. Save it when ready.');
+			return;
+		}
+		await vscode.window.showInformationMessage(
+			result === 'already-present'
+				? '.gitignore already excludes .langclarity/.'
+				: 'Added /.langclarity/ to .gitignore.',
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'The .gitignore update failed.';
+		await vscode.window.showErrorMessage(`LangClarity could not update .gitignore: ${message}`);
+	}
+}
+
+async function addLangClarityToGitignore(
+	workspace: vscode.WorkspaceFolder,
+): Promise<'already-present' | 'pending-save' | 'saved'> {
+	const gitignoreUri = vscode.Uri.joinPath(workspace.uri, '.gitignore');
+	await assertPathHasNoSymlinks(workspace.uri, gitignoreUri);
+	const existingDocument = vscode.workspace.textDocuments.find(
+		(document) => document.uri.toString() === gitignoreUri.toString(),
+	);
+	const content = existingDocument?.getText() ?? await currentGitignoreContent(workspace);
+	if (content !== undefined && hasLangClarityIgnoreRule(content)) {
+		return 'already-present';
+	}
+	if (content === undefined) {
+		await vscode.workspace.fs.writeFile(gitignoreUri, Buffer.from('/.langclarity/\n', 'utf8'));
+		return 'saved';
+	}
+
+	const document = existingDocument ?? await vscode.workspace.openTextDocument(gitignoreUri);
+	const endOfLine = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+	const updated = appendLangClarityIgnoreRule(document.getText(), endOfLine);
+	const edit = new vscode.WorkspaceEdit();
+	edit.insert(document.uri, document.positionAt(document.getText().length), updated.slice(document.getText().length));
+	const wasDirty = document.isDirty;
+	if (!await vscode.workspace.applyEdit(edit)) {
+		throw new Error('VS Code rejected the edit.');
+	}
+	if (wasDirty) {
+		return 'pending-save';
+	}
+	if (!await document.save()) {
+		throw new Error('VS Code could not save the file.');
+	}
+	return 'saved';
+}
+
+async function currentGitignoreContent(workspace: vscode.WorkspaceFolder): Promise<string | undefined> {
+	const gitignoreUri = vscode.Uri.joinPath(workspace.uri, '.gitignore');
+	const openDocument = vscode.workspace.textDocuments.find(
+		(document) => document.uri.toString() === gitignoreUri.toString(),
+	);
+	if (openDocument) {
+		return openDocument.getText();
+	}
+	await assertPathHasNoSymlinks(workspace.uri, gitignoreUri);
+	try {
+		return Buffer.from(await vscode.workspace.fs.readFile(gitignoreUri)).toString('utf8');
+	} catch (error) {
+		if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') {
+			return undefined;
+		}
+		throw error;
+	}
+}
+
+function gitignoreChoices(context: vscode.ExtensionContext): Record<string, GitignoreChoice> {
+	return context.workspaceState.get<Record<string, GitignoreChoice>>(gitignoreChoicesKey, {});
+}
+
+async function setGitignoreChoice(
+	context: vscode.ExtensionContext,
+	workspace: vscode.WorkspaceFolder,
+	choice: GitignoreChoice,
+): Promise<void> {
+	await context.workspaceState.update(gitignoreChoicesKey, {
+		...gitignoreChoices(context),
+		[workspace.uri.toString()]: choice,
+	});
 }
 
 async function workspaceSource(input: SourceCommandInput, enforceGenerationLimits: boolean): Promise<{

@@ -60,7 +60,7 @@ LangClarity:
 - starts Codex in an isolated temporary runtime root with no approvals, disables known tool surfaces, and aborts if Codex reports a tool item;
 - stores interpretations as ordinary Markdown in the current workspace.
 
-LangClarity does not modify `.gitignore`. Decide with your team whether `.langclarity/` should be committed, because its Markdown may contain source-derived information.
+After creating the first interpretation in a workspace folder, LangClarity offers to add `/.langclarity/` to that folder's `.gitignore`. It changes `.gitignore` only when you explicitly choose **Add to .gitignore**. You can also run **LangClarity: Add .langclarity to .gitignore** later. Decide with your team whether `.langclarity/` should be committed, because its Markdown may contain source-derived information.
 
 Codex sign-in and account policy behavior are documented in the [official OpenAI authentication guide](https://learn.chatgpt.com/docs/auth).
 

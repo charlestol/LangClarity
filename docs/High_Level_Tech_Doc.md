@@ -31,7 +31,7 @@ The proof-of-concept question is whether durable English improves practical unde
 | Safety | Syntax validation, diagnostics warning, exact diff, explicit apply |
 | Infrastructure | No LangClarity backend or account |
 
-LangClarity never silently changes `.gitignore`; each team decides whether `.langclarity/` is private, ignored, or version-controlled.
+LangClarity never silently changes `.gitignore`; after the first interpretation it offers an explicit action to ignore `.langclarity/`, and each team decides whether the folder is private, ignored, or version-controlled.
 
 ## Core experience
 

@@ -26,7 +26,7 @@ This is a pre-development design with the Codex integration gate completed. On 2
 - One source file has at most one Markdown interpretation in its owning workspace folder.
 - Source `src/users.ts` maps to `.langclarity/src/users.ts.md`. Retaining the source extension prevents `.ts`/`.js` basename collisions.
 - Both source and English use native VS Code text editors. A custom webview is unnecessary for the proof of concept.
-- `.langclarity/` is ordinary workspace content. LangClarity does not silently commit it or add it to `.gitignore`.
+- `.langclarity/` is ordinary workspace content. LangClarity does not silently commit or ignore it; after the first interpretation, the user may explicitly add it to `.gitignore`.
 - A full proposed source document is the simplest reliable internal contract for English → Code, even if Codex returns a patch. The proposal coordinator always materializes the exact final document before validation and preview.
 
 ### 3.2 Phase 0 findings
@@ -719,7 +719,7 @@ For Git checkout or disk changes while an unsaved document exists, follow VS Cod
 - Native VS Code document handling preserves unsaved English edits and performs normal saves; LangClarity does not maintain another autosave mechanism.
 - Code → English writes a complete validated Markdown result only after the response and base source remain current.
 - On activation, do not eagerly parse or hash the entire workspace. Load a paired file only when its source or English document is used.
-- Never silently alter `.gitignore`. The user or team decides whether `.langclarity/` is committed.
+- Never silently alter `.gitignore`. After the first interpretation, offer an explicit action to add `/.langclarity/`; the user or team decides whether `.langclarity/` is committed.
 
 ### 13.2 Corruption and migration
 

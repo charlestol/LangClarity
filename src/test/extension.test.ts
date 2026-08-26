@@ -34,6 +34,7 @@ suite('Extension contributions', () => {
 		assert.ok(commands.includes('langclarity.codeToEnglish'));
 		assert.ok(commands.includes('langclarity.selectModel'));
 		assert.ok(commands.includes('langclarity.openMarkdown'));
+		assert.ok(commands.includes('langclarity.addToGitignore'));
 		assert.ok(!commands.includes('langclarity.helloWorld'));
 		assert.ok(hidden.some((item) => item.command === 'langclarity.openEnglishView'
 			&& item.when?.includes('langclarity.activeHasInterpretation')));
@@ -48,6 +49,7 @@ suite('Extension contributions', () => {
 		assert.ok(manifest.activationEvents?.includes('onCommand:langclarity.englishToCode'));
 		assert.ok(manifest.activationEvents?.includes('onCommand:langclarity.codeToEnglish'));
 		assert.ok(manifest.activationEvents?.includes('onCommand:langclarity.selectModel'));
+		assert.ok(manifest.activationEvents?.includes('onCommand:langclarity.addToGitignore'));
 		assert.ok(manifest.activationEvents?.includes('workspaceContains:**/.langclarity/**/*.md'));
 		assert.ok(manifest.contributes?.customEditors?.some((item) => item.viewType === 'langclarity.interpretationView'
 			&& item.selector?.some((selector) => selector.filenamePattern === '**/.langclarity/**/*.md')));
@@ -135,7 +137,7 @@ suite('Extension contributions', () => {
 		assert.doesNotMatch(stylesheet, /height: min\(58vh, 620px\)/u);
 		assert.doesNotMatch(provider, /gutter'\)\.scrollTop/u);
 		assert.match(provider, /sourceLineCount/u);
-		assert.match(provider, /Everyday English, exactly one row per source line/u);
+		assert.doesNotMatch(provider, /Everyday English, exactly one row per source line/u);
 		assert.match(provider, /function exactRow/u);
 		assert.doesNotMatch(provider, /event\.key === 'Enter'/u);
 		assert.match(provider, /event\.key !== 'Tab'/u);
@@ -143,7 +145,7 @@ suite('Extension contributions', () => {
 		assert.match(provider, /line\.addEventListener\('click'/u);
 		assert.match(provider, /id="suggested-action"/u);
 		assert.match(provider, /data-tab="behavior">English Code</u);
-		assert.match(provider, /<h2>English Code<\/h2>/u);
+		assert.doesNotMatch(provider, /<h2>English Code<\/h2>/u);
 		assert.match(provider, /Review & Apply English → Code/u);
 		assert.match(provider, /Apply Code → English/u);
 		assert.match(provider, /Choose Apply Direction/u);

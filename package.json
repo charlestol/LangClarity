@@ -37,6 +37,7 @@
     "onCommand:langclarity.codeToEnglish",
     "onCommand:langclarity.selectModel",
     "onCommand:langclarity.openMarkdown",
+    "onCommand:langclarity.addToGitignore",
     "onCustomEditor:langclarity.interpretationView",
     "workspaceContains:**/.langclarity/**/*.md"
   ],
@@ -71,6 +72,11 @@
       {
         "command": "langclarity.openMarkdown",
         "title": "Open Interpretation Markdown",
+        "category": "LangClarity"
+      },
+      {
+        "command": "langclarity.addToGitignore",
+        "title": "Add .langclarity to .gitignore",
         "category": "LangClarity"
       }
     ],

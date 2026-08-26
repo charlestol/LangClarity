@@ -1,7 +1,7 @@
 :root { color-scheme: light dark; }
 body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
 .header { position: sticky; top: 0; z-index: 2; padding: 18px 22px 12px; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); }
-.header-row, .actions, .tabs, .behavior-heading { display: flex; align-items: center; gap: 8px; }
+.header-row, .actions, .tabs { display: flex; align-items: center; gap: 8px; }
 h1 { flex: 1; margin: 0; font-size: 17px; }
 .status { padding: 3px 7px; border: 1px solid var(--vscode-panel-border); border-radius: 10px; color: var(--vscode-descriptionForeground); font-size: 11px; }
 .meta { margin-top: 5px; color: var(--vscode-descriptionForeground); font-size: 12px; }
@@ -16,10 +16,8 @@ button.secondary { color: var(--vscode-foreground); background: var(--vscode-but
 main { padding: 20px 0 48px; }
 .panel { box-sizing: border-box; display: none; width: 100%; }
 .panel.active { display: block; }
-.behavior-heading { justify-content: space-between; margin-bottom: 12px; padding: 0 22px; }
 h2, h3 { margin: 0; font-size: 15px; }
 .readonly-section { padding: 14px; margin-bottom: 12px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; background: var(--vscode-editorWidget-background); }
-.behavior-hint { color: var(--vscode-descriptionForeground); font-size: 12px; }
 .behavior-editor { display: grid; grid-template-columns: max-content minmax(0, 1fr); border: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
 .behavior-gutter { min-width: 1ch; overflow: hidden; padding: 8px 7px 8px 2px; color: var(--vscode-editorLineNumber-foreground); background: var(--vscode-editorGutter-background, var(--vscode-editor-background)); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 22px; text-align: right; user-select: none; }
 .behavior-gutter div { height: 22px; white-space: nowrap; cursor: pointer; }
