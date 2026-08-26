@@ -1,0 +1,29 @@
+{
+  "id": "03-counter-class",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "mustHave": [
+    {
+      "id": "counter-class",
+      "description": "Describes a Counter that tracks a numeric value.",
+      "patterns": ["(?i)counter", "(?i)value|count|number"]
+    },
+    {
+      "id": "increment",
+      "description": "Increment increases the value by 1 and returns it.",
+      "patterns": ["(?i)increment|increase|add\\s*1|\\+\\s*1"]
+    },
+    {
+      "id": "reset-to-zero",
+      "description": "Reset sets the value back to 0.",
+      "patterns": ["(?i)reset", "(?i)\\b0\\b|zero"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-persistence",
+      "description": "Must not claim the counter is saved to disk or a database.",
+      "patterns": ["(?i)\\b(?:disk|database|localStorage|persist)\\b"]
+    }
+  ]
+}

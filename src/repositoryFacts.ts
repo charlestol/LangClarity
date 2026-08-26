@@ -4,6 +4,9 @@ import type * as TypeScript from 'typescript';
 
 let typescriptPromise: Promise<typeof TypeScript> | undefined;
 
+/** Process-lifetime cache of compiler options by tsconfig path. No file watchers; stale until reload. */
+const compilerOptionsByConfigPath = new Map<string, TypeScript.CompilerOptions>();
+
 export interface SourceImport {
 	specifier: string;
 	line: number;
@@ -132,12 +135,32 @@ function compilerOptionsFor(
 	sourcePath: string,
 ): TypeScript.CompilerOptions {
 	const configPath = ts.findConfigFile(path.dirname(sourcePath), ts.sys.fileExists);
-	if (configPath) {
-		const config = ts.readConfigFile(configPath, ts.sys.readFile);
-		if (!config.error) {
-			return ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath)).options;
-		}
+	if (!configPath) {
+		return defaultCompilerOptions(ts);
 	}
+
+	const cached = compilerOptionsByConfigPath.get(configPath);
+	if (cached) {
+		return cached;
+	}
+
+	const config = ts.readConfigFile(configPath, ts.sys.readFile);
+	if (config.error) {
+		return defaultCompilerOptions(ts);
+	}
+
+	// convertCompilerOptionsFromJson reads options only — unlike parseJsonConfigFileContent,
+	// it does not enumerate include/exclude via ts.sys.readDirectory.
+	const { options } = ts.convertCompilerOptionsFromJson(
+		config.config.compilerOptions ?? {},
+		path.dirname(configPath),
+		configPath,
+	);
+	compilerOptionsByConfigPath.set(configPath, options);
+	return options;
+}
+
+function defaultCompilerOptions(ts: typeof TypeScript): TypeScript.CompilerOptions {
 	return {
 		allowJs: true,
 		jsx: ts.JsxEmit.Preserve,

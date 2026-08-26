@@ -1,17 +1,15 @@
 import path from 'node:path';
 import * as vscode from 'vscode';
 import {
-	AuthenticationRequiredError,
 	CodexInterpreter,
-	CodexResponseError,
 	type CodeToEnglishOutput,
 	type ModelResolution,
-	UsageLimitedError,
 } from './codexInterpreter';
 import {
 	parseEnglishDocument,
 } from './englishDocument';
 import { appendLangClarityIgnoreRule, hasLangClarityIgnoreRule } from './gitignore';
+import type { Interpreter } from './interpreter';
 import {
 	InterpretationViewProvider,
 	interpretationViewType,
@@ -20,9 +18,6 @@ import {
 	englishUriFor,
 	hashText,
 	MAX_ENGLISH_BYTES,
-	MAX_SOURCE_BYTES,
-	MAX_SOURCE_LINES,
-	lineCount,
 	relativeSourcePath,
 	renderInterpretation,
 	sourceAccessError,
@@ -34,7 +29,15 @@ import {
 	uriExists,
 	writeNewFileAtomically,
 } from './markdownRepository';
-import { operationStartError } from './operationPolicy';
+import {
+	codexRetryReporter,
+	ensureEnglishWithinLimits,
+	ensureSourceWithinLimits,
+	reportOperationFailure,
+	requireTrustedWorkspace,
+	runModelCommand,
+	withCodexProgress,
+} from './modelCommands';
 import { PairedFileLifecycle } from './pairedFileLifecycle';
 import { ProposalCoordinator } from './proposalCoordinator';
 import { SessionCoordinator } from './sessionCoordinator';
@@ -53,9 +56,13 @@ interface SyncCommandOptions {
 
 type SourceCommandInput = vscode.Uri | SyncCommandOptions | undefined;
 
+let activeInterpreter: Interpreter | undefined;
+
 export function activate(context: vscode.ExtensionContext): void {
 	const output = vscode.window.createOutputChannel('LangClarity');
-	const interpreter = new CodexInterpreter();
+	const codex = new CodexInterpreter();
+	const interpreter: Interpreter = codex;
+	activeInterpreter = interpreter;
 	const pendingSources = new Set<string>();
 	const sessions = new SessionCoordinator(output);
 	const lifecycle = new PairedFileLifecycle(sessions, output);
@@ -79,15 +86,16 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (!source) {
 				return;
 			}
-			if (!vscode.workspace.isTrusted) {
-				await vscode.window.showErrorMessage('Trust this workspace before connecting to the local Codex runtime.');
+			if (!await requireTrustedWorkspace(
+				'Trust this workspace before connecting to the local Codex runtime.',
+			)) {
 				return;
 			}
 			try {
 				const models = await vscode.window.withProgress({
 					location: vscode.ProgressLocation.Notification,
 					title: 'LangClarity: Loading available Codex models',
-				}, () => interpreter.listModels(source.workspace.uri.fsPath));
+				}, () => codex.listModels(source.workspace.uri.fsPath));
 				await selectModelPreference(context, models);
 			} catch (error) {
 				const retry = await reportOperationFailure(
@@ -146,10 +154,9 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (!source) {
 				return;
 			}
-			if (!vscode.workspace.isTrusted) {
-				await vscode.window.showErrorMessage(
-					'Trust this workspace before sending source to Codex/OpenAI.',
-				);
+			if (!await requireTrustedWorkspace(
+				'Trust this workspace before sending source to Codex/OpenAI.',
+			)) {
 				return;
 			}
 
@@ -180,76 +187,58 @@ export function activate(context: vscode.ExtensionContext): void {
 			const sourcePath = relativeSourcePath(source.workspace.uri, source.document.uri);
 			const fileName = path.posix.basename(source.document.uri.path);
 			output.appendLine(`interpret:start file=${fileName}`);
-			const startError = operationStartError(pendingSources, sourceKey);
-			if (startError) {
-				await vscode.window.showInformationMessage(startError);
-				return;
-			}
-			pendingSources.add(sourceKey);
-			let retryRequested = false;
 
-			try {
-				await vscode.window.withProgress({
-					location: vscode.ProgressLocation.Notification,
-					title: `LangClarity: Interpreting ${fileName}`,
-					cancellable: true,
-				}, async (progress, cancellationToken) => {
-					const interpreted = await interpreter.codeToEnglish({
-						source: sourceText,
-						sourcePath,
-						languageId: source.document.languageId,
-						workspacePath: source.workspace.uri.fsPath,
-						cancellationToken,
-						onRetry: () => progress.report({ message: 'Codex is retrying.' }),
-						modelPreference: currentModelPreference(context),
+			await runModelCommand({
+				output,
+				pendingSources,
+				sourceKey,
+				fileName,
+				operation: 'interpret',
+				cancelledMessage: 'LangClarity interpretation cancelled.',
+				failureFallback: 'LangClarity could not interpret this file.',
+				retryCommand: 'langclarity.interpretFile',
+				retryArgs: { sourceUri: source.document.uri },
+				run: async () => {
+					await withCodexProgress(`LangClarity: Interpreting ${fileName}`, async (progress, cancellationToken) => {
+						const interpreted = await interpreter.codeToEnglish({
+							source: sourceText,
+							sourcePath,
+							languageId: source.document.languageId,
+							workspacePath: source.workspace.uri.fsPath,
+							cancellationToken,
+							onRetry: codexRetryReporter(progress),
+							modelPreference: currentModelPreference(context),
+						});
+						await reportModelResolution(context, interpreted);
+						if (cancellationToken.isCancellationRequested) {
+							throw new vscode.CancellationError();
+						}
+						if (hashText(source.document.getText()) !== sourceHash) {
+							throw new Error('The source changed while Codex was interpreting it. No English file was written.');
+						}
+						if (source.document.isClosed) {
+							throw new Error('The source was closed or moved while Codex was interpreting it. No English file was written.');
+						}
+						const markdown = await renderedEnglishDocument(interpreted, {
+							sourcePath,
+							sourceHash,
+							languageId: source.document.languageId,
+							source: sourceText,
+							sourceUri: source.document.uri,
+							workspaceUri: source.workspace.uri,
+						});
+						await writeNewFileAtomically(englishUri, markdown);
 					});
-					await reportModelResolution(context, interpreted);
-					if (cancellationToken.isCancellationRequested) {
-						throw new vscode.CancellationError();
+					output.appendLine(`interpret:completed file=${fileName}`);
+					await openInterpretationBeside(englishUri);
+					await loadSessionAndReport(sessions, source.document.uri, englishUri);
+					try {
+						await offerGitignoreChoice(context, source.workspace, pendingGitignorePrompts);
+					} catch {
+						output.appendLine('gitignore:prompt-unavailable');
 					}
-					if (hashText(source.document.getText()) !== sourceHash) {
-						throw new Error('The source changed while Codex was interpreting it. No English file was written.');
-					}
-					if (source.document.isClosed) {
-						throw new Error('The source was closed or moved while Codex was interpreting it. No English file was written.');
-					}
-					const markdown = await renderedEnglishDocument(interpreted, {
-						sourcePath,
-						sourceHash,
-						languageId: source.document.languageId,
-						source: sourceText,
-						sourceUri: source.document.uri,
-						workspaceUri: source.workspace.uri,
-					});
-					await writeNewFileAtomically(englishUri, markdown);
-				});
-				output.appendLine(`interpret:completed file=${fileName}`);
-				await openInterpretationBeside(englishUri);
-				await loadSessionAndReport(sessions, source.document.uri, englishUri);
-				try {
-					await offerGitignoreChoice(context, source.workspace, pendingGitignorePrompts);
-				} catch {
-					output.appendLine('gitignore:prompt-unavailable');
-				}
-			} catch (error) {
-				if (error instanceof vscode.CancellationError) {
-					output.appendLine(`interpret:cancelled file=${fileName}`);
-					await vscode.window.showInformationMessage('LangClarity interpretation cancelled.');
-					return;
-				}
-				retryRequested = await reportOperationFailure(
-					output,
-					'interpret',
-					fileName,
-					error,
-					'LangClarity could not interpret this file.',
-				);
-			} finally {
-				pendingSources.delete(sourceKey);
-			}
-			if (retryRequested) {
-				await vscode.commands.executeCommand('langclarity.interpretFile', { sourceUri: source.document.uri });
-			}
+				},
+			});
 		}),
 		vscode.commands.registerCommand('langclarity.chooseSyncDirection', async (input?: SourceCommandInput) => {
 			const options = syncCommandOptions(input);
@@ -289,256 +278,211 @@ export function activate(context: vscode.ExtensionContext): void {
 		}),
 		vscode.commands.registerCommand('langclarity.englishToCode', async (input?: SourceCommandInput) => {
 			const options = syncCommandOptions(input);
-			let sourceKey: string | undefined;
-			let retrySourceUri: vscode.Uri | undefined;
-			let fileName = 'source file';
-			let retryRequested = false;
-			try {
-				const capture = options.sourceUri
-					? await captureForSourceCommand(sessions, options.sourceUri)
-					: await sessions.captureActive();
-				if (!capture) {
-					await offerMissingInterpretation(options.sourceUri, 'requesting English → Code');
+			const capture = options.sourceUri
+				? await captureForSourceCommand(sessions, options.sourceUri)
+				: await sessions.captureActive();
+			if (!capture) {
+				await offerMissingInterpretation(options.sourceUri, 'requesting English → Code');
+				return;
+			}
+			const fileName = path.posix.basename(capture.sourceUri.path);
+			if (capture.state === 'SYNCED') {
+				await vscode.window.showInformationMessage('Edit the English document before requesting English → Code.');
+				return;
+			}
+			if (capture.state === 'CODE_CHANGED') {
+				await vscode.window.showErrorMessage('The source changed, but English did not. English → Code requires an English edit.');
+				return;
+			}
+			if (capture.state === 'BOTH_CHANGED' && !options.authorityConfirmed) {
+				const authority = await vscode.window.showWarningMessage(
+					'Code and English both changed. Continuing makes English authoritative, but current code stays unchanged until you approve the exact diff.',
+					{ modal: true },
+					'Continue English → Code',
+				);
+				if (authority !== 'Continue English → Code') {
 					return;
 				}
-				retrySourceUri = capture.sourceUri;
-				fileName = path.posix.basename(capture.sourceUri.path);
-				if (capture.state === 'SYNCED') {
-					await vscode.window.showInformationMessage('Edit the English document before requesting English → Code.');
-					return;
-				}
-				if (capture.state === 'CODE_CHANGED') {
-					await vscode.window.showErrorMessage('The source changed, but English did not. English → Code requires an English edit.');
-					return;
-				}
-				if (capture.state === 'BOTH_CHANGED' && !options.authorityConfirmed) {
-					const authority = await vscode.window.showWarningMessage(
-						'Code and English both changed. Continuing makes English authoritative, but current code stays unchanged until you approve the exact diff.',
-						{ modal: true },
-						'Continue English → Code',
-					);
-					if (authority !== 'Continue English → Code') {
-						return;
+			}
+			if (!await requireTrustedWorkspace(
+				'Trust this workspace before sending source and English to Codex/OpenAI.',
+			)) {
+				return;
+			}
+			if (!await ensureProviderDisclosure(context, 'Continue English → Code')) {
+				return;
+			}
+			if (!await ensureSourceWithinLimits(capture.sourceText)) {
+				return;
+			}
+			if (!await ensureEnglishWithinLimits(capture.englishText)) {
+				return;
+			}
+
+			const sourceKey = capture.sourceUri.toString();
+
+			await runModelCommand({
+				output,
+				pendingSources,
+				sourceKey,
+				fileName,
+				operation: 'proposal',
+				cancelledMessage: 'LangClarity proposal cancelled.',
+				failureFallback: 'LangClarity could not create a code proposal.',
+				retryCommand: 'langclarity.englishToCode',
+				retryArgs: { sourceUri: capture.sourceUri },
+				run: async () => {
+					const workspace = vscode.workspace.getWorkspaceFolder(capture.sourceUri);
+					if (!workspace) {
+						throw new Error('The paired source is no longer inside a workspace.');
 					}
-				}
-				if (!vscode.workspace.isTrusted) {
-					await vscode.window.showErrorMessage('Trust this workspace before sending source and English to Codex/OpenAI.');
-					return;
-				}
-				if (!await ensureProviderDisclosure(context, 'Continue English → Code')) {
-					return;
-				}
-				if (Buffer.byteLength(capture.sourceText, 'utf8') > MAX_SOURCE_BYTES
-					|| lineCount(capture.sourceText) > MAX_SOURCE_LINES) {
-					await vscode.window.showErrorMessage('The current source exceeds the LangClarity MVP limit of 75 KiB or 2,000 lines.');
-					return;
-				}
-				if (Buffer.byteLength(capture.englishText, 'utf8') > MAX_ENGLISH_BYTES) {
-					await vscode.window.showErrorMessage('The English document exceeds the LangClarity MVP limit of 256 KiB.');
-					return;
-				}
-
-				const workspace = vscode.workspace.getWorkspaceFolder(capture.sourceUri);
-				if (!workspace) {
-					throw new Error('The paired source is no longer inside a workspace.');
-				}
-				sourceKey = capture.sourceUri.toString();
-				const startError = operationStartError(pendingSources, sourceKey);
-				if (startError) {
-					await vscode.window.showInformationMessage(startError);
-					return;
-				}
-				pendingSources.add(sourceKey);
-				output.appendLine(`proposal:start file=${fileName}`);
-
-				const result = await vscode.window.withProgress({
-					location: vscode.ProgressLocation.Notification,
-					title: `LangClarity: Proposing changes to ${fileName}`,
-					cancellable: true,
-				}, async (progress, cancellationToken) => interpreter.englishToCode({
-					source: capture.sourceText,
-					english: capture.englishText,
-					sourcePath: capture.parsedEnglish.frontmatter.source,
-					languageId: capture.parsedEnglish.frontmatter.languageId,
-					workspacePath: workspace.uri.fsPath,
-					cancellationToken,
-					onRetry: () => progress.report({ message: 'Codex is retrying.' }),
-					modelPreference: currentModelPreference(context),
-				}));
-				await reportModelResolution(context, result);
-				const current = await sessions.captureForSource(capture.sourceUri);
-				if (!current
-					|| current.sourceHash !== capture.sourceHash
-					|| current.englishDocumentHash !== capture.englishDocumentHash) {
-					throw new Error('Code or English changed while Codex was creating the proposal. Generate a new proposal.');
-				}
-				output.appendLine(`proposal:ready file=${fileName}`);
-				await proposals.review(capture, result, async (
-					proposedSource,
-					cancellationToken,
-					onRetry,
-				) => {
-					const interpreted = await interpreter.codeToEnglish({
-						source: proposedSource,
-						sourcePath: capture.parsedEnglish.frontmatter.source,
-						languageId: capture.parsedEnglish.frontmatter.languageId,
-						workspacePath: workspace.uri.fsPath,
+					output.appendLine(`proposal:start file=${fileName}`);
+					const result = await withCodexProgress(
+						`LangClarity: Proposing changes to ${fileName}`,
+						async (progress, cancellationToken) => interpreter.englishToCode({
+							source: capture.sourceText,
+							english: capture.englishText,
+							sourcePath: capture.parsedEnglish.frontmatter.source,
+							languageId: capture.parsedEnglish.frontmatter.languageId,
+							workspacePath: workspace.uri.fsPath,
+							cancellationToken,
+							onRetry: codexRetryReporter(progress),
+							modelPreference: currentModelPreference(context),
+						}),
+					);
+					await reportModelResolution(context, result);
+					const current = await sessions.captureForSource(capture.sourceUri);
+					if (!current
+						|| current.sourceHash !== capture.sourceHash
+						|| current.englishDocumentHash !== capture.englishDocumentHash) {
+						throw new Error('Code or English changed while Codex was creating the proposal. Generate a new proposal.');
+					}
+					output.appendLine(`proposal:ready file=${fileName}`);
+					await proposals.review(capture, result, async (
+						proposedSource,
 						cancellationToken,
 						onRetry,
-						modelPreference: currentModelPreference(context),
+					) => {
+						const interpreted = await interpreter.codeToEnglish({
+							source: proposedSource,
+							sourcePath: capture.parsedEnglish.frontmatter.source,
+							languageId: capture.parsedEnglish.frontmatter.languageId,
+							workspacePath: workspace.uri.fsPath,
+							cancellationToken,
+							onRetry,
+							modelPreference: currentModelPreference(context),
+						});
+						await reportModelResolution(context, interpreted);
+						if (cancellationToken.isCancellationRequested) {
+							throw new vscode.CancellationError();
+						}
+						return renderedEnglishDocument(interpreted, {
+							sourcePath: capture.parsedEnglish.frontmatter.source,
+							sourceHash: hashText(proposedSource),
+							languageId: capture.parsedEnglish.frontmatter.languageId,
+							source: proposedSource,
+							sourceUri: capture.sourceUri,
+							workspaceUri: workspace.uri,
+						});
 					});
-					await reportModelResolution(context, interpreted);
-					if (cancellationToken.isCancellationRequested) {
-						throw new vscode.CancellationError();
-					}
-					return renderedEnglishDocument(interpreted, {
-						sourcePath: capture.parsedEnglish.frontmatter.source,
-						sourceHash: hashText(proposedSource),
-						languageId: capture.parsedEnglish.frontmatter.languageId,
-						source: proposedSource,
-						sourceUri: capture.sourceUri,
-						workspaceUri: workspace.uri,
-					});
-				});
-			} catch (error) {
-				if (error instanceof vscode.CancellationError) {
-					output.appendLine(`proposal:cancelled file=${fileName}`);
-					await vscode.window.showInformationMessage('LangClarity proposal cancelled.');
-					return;
-				}
-				retryRequested = await reportOperationFailure(
-					output,
-					'proposal',
-					fileName,
-					error,
-					'LangClarity could not create a code proposal.',
-				);
-			} finally {
-				if (sourceKey) {
-					pendingSources.delete(sourceKey);
-				}
-			}
-			if (retryRequested) {
-				await vscode.commands.executeCommand('langclarity.englishToCode', { sourceUri: retrySourceUri });
-			}
+				},
+			});
 		}),
 		vscode.commands.registerCommand('langclarity.codeToEnglish', async (input?: SourceCommandInput) => {
 			const options = syncCommandOptions(input);
-			let sourceKey: string | undefined;
-			let retrySourceUri: vscode.Uri | undefined;
-			let fileName = 'source file';
-			let retryRequested = false;
-			try {
-				const capture = options.sourceUri
-					? await captureForSourceCommand(sessions, options.sourceUri)
-					: await sessions.captureActive();
-				if (!capture) {
-					await offerMissingInterpretation(options.sourceUri, 'requesting Code → English');
-					return;
-				}
-				retrySourceUri = capture.sourceUri;
-				fileName = path.posix.basename(capture.sourceUri.path);
-				if (capture.state === 'SYNCED') {
-					await vscode.window.showInformationMessage('Code and English are already synchronized.');
-					return;
-				}
-				if (capture.state === 'ENGLISH_CHANGED') {
-					await vscode.window.showErrorMessage('English changed, but the source did not. Use English → Code to synchronize this edit.');
-					return;
-				}
-				if (capture.state === 'BOTH_CHANGED' && !options.authorityConfirmed) {
-					const authority = await vscode.window.showWarningMessage(
-						'Code and English both changed. Continuing makes code authoritative and replaces the current unsynchronized English only after Codex returns a complete valid interpretation.',
-						{ modal: true },
-						'Continue Code → English',
-					);
-					if (authority !== 'Continue Code → English') {
-						return;
-					}
-				}
-				if (!vscode.workspace.isTrusted) {
-					await vscode.window.showErrorMessage('Trust this workspace before sending source to Codex/OpenAI.');
-					return;
-				}
-				if (!await ensureProviderDisclosure(context, 'Continue Code → English')) {
-					return;
-				}
-				if (Buffer.byteLength(capture.sourceText, 'utf8') > MAX_SOURCE_BYTES
-					|| lineCount(capture.sourceText) > MAX_SOURCE_LINES) {
-					await vscode.window.showErrorMessage('The current source exceeds the LangClarity MVP limit of 75 KiB or 2,000 lines.');
-					return;
-				}
-
-				const workspace = vscode.workspace.getWorkspaceFolder(capture.sourceUri);
-				if (!workspace) {
-					throw new Error('The paired source is no longer inside a workspace.');
-				}
-				sourceKey = capture.sourceUri.toString();
-				const startError = operationStartError(pendingSources, sourceKey);
-				if (startError) {
-					await vscode.window.showInformationMessage(startError);
-					return;
-				}
-				pendingSources.add(sourceKey);
-				output.appendLine(`refresh:start file=${fileName}`);
-
-				const interpreted = await vscode.window.withProgress({
-					location: vscode.ProgressLocation.Notification,
-					title: `LangClarity: Refreshing English for ${fileName}`,
-					cancellable: true,
-				}, async (progress, cancellationToken) => interpreter.codeToEnglish({
-					source: capture.sourceText,
-					sourcePath: capture.parsedEnglish.frontmatter.source,
-					languageId: capture.parsedEnglish.frontmatter.languageId,
-					workspacePath: workspace.uri.fsPath,
-					cancellationToken,
-					onRetry: () => progress.report({ message: 'Codex is retrying.' }),
-					modelPreference: currentModelPreference(context),
-				}));
-				await reportModelResolution(context, interpreted);
-				const markdown = await renderedEnglishDocument(interpreted, {
-					sourcePath: capture.parsedEnglish.frontmatter.source,
-					sourceHash: capture.sourceHash,
-					languageId: capture.parsedEnglish.frontmatter.languageId,
-					source: capture.sourceText,
-					sourceUri: capture.sourceUri,
-					workspaceUri: workspace.uri,
-				});
-				const englishDocument = await vscode.workspace.openTextDocument(capture.englishUri);
-				const current = await sessions.captureForSource(capture.sourceUri);
-				if (!current
-					|| current.sourceHash !== capture.sourceHash
-					|| current.englishDocumentHash !== capture.englishDocumentHash) {
-					throw new Error('Code or English changed while Codex was refreshing the interpretation. The previous English was preserved.');
-				}
-				await replaceTextDocumentAndSave(englishDocument, capture.englishText, markdown);
-				const refreshed = await sessions.reload(capture.sourceUri);
-				if (refreshed?.state !== 'SYNCED') {
-					throw new Error('English was refreshed, but the synchronized baselines could not be verified.');
-				}
-				output.appendLine(`refresh:completed file=${fileName}`);
-				await vscode.window.showInformationMessage('LangClarity refreshed the English interpretation.');
-			} catch (error) {
-				if (error instanceof vscode.CancellationError) {
-					output.appendLine(`refresh:cancelled file=${fileName}`);
-					await vscode.window.showInformationMessage('LangClarity refresh cancelled. The previous English was preserved.');
-					return;
-				}
-				retryRequested = await reportOperationFailure(
-					output,
-					'refresh',
-					fileName,
-					error,
-					'LangClarity could not refresh the English interpretation.',
+			const capture = options.sourceUri
+				? await captureForSourceCommand(sessions, options.sourceUri)
+				: await sessions.captureActive();
+			if (!capture) {
+				await offerMissingInterpretation(options.sourceUri, 'requesting Code → English');
+				return;
+			}
+			const fileName = path.posix.basename(capture.sourceUri.path);
+			if (capture.state === 'SYNCED') {
+				await vscode.window.showInformationMessage('Code and English are already synchronized.');
+				return;
+			}
+			if (capture.state === 'ENGLISH_CHANGED') {
+				await vscode.window.showErrorMessage('English changed, but the source did not. Use English → Code to synchronize this edit.');
+				return;
+			}
+			if (capture.state === 'BOTH_CHANGED' && !options.authorityConfirmed) {
+				const authority = await vscode.window.showWarningMessage(
+					'Code and English both changed. Continuing makes code authoritative and replaces the current unsynchronized English only after Codex returns a complete valid interpretation.',
+					{ modal: true },
+					'Continue Code → English',
 				);
-			} finally {
-				if (sourceKey) {
-					pendingSources.delete(sourceKey);
+				if (authority !== 'Continue Code → English') {
+					return;
 				}
 			}
-			if (retryRequested) {
-				await vscode.commands.executeCommand('langclarity.codeToEnglish', { sourceUri: retrySourceUri });
+			if (!await requireTrustedWorkspace(
+				'Trust this workspace before sending source to Codex/OpenAI.',
+			)) {
+				return;
 			}
+			if (!await ensureProviderDisclosure(context, 'Continue Code → English')) {
+				return;
+			}
+			if (!await ensureSourceWithinLimits(capture.sourceText)) {
+				return;
+			}
+
+			const sourceKey = capture.sourceUri.toString();
+
+			await runModelCommand({
+				output,
+				pendingSources,
+				sourceKey,
+				fileName,
+				operation: 'refresh',
+				cancelledMessage: 'LangClarity refresh cancelled. The previous English was preserved.',
+				failureFallback: 'LangClarity could not refresh the English interpretation.',
+				retryCommand: 'langclarity.codeToEnglish',
+				retryArgs: { sourceUri: capture.sourceUri },
+				run: async () => {
+					const workspace = vscode.workspace.getWorkspaceFolder(capture.sourceUri);
+					if (!workspace) {
+						throw new Error('The paired source is no longer inside a workspace.');
+					}
+					output.appendLine(`refresh:start file=${fileName}`);
+					const interpreted = await withCodexProgress(
+						`LangClarity: Refreshing English for ${fileName}`,
+						async (progress, cancellationToken) => interpreter.codeToEnglish({
+							source: capture.sourceText,
+							sourcePath: capture.parsedEnglish.frontmatter.source,
+							languageId: capture.parsedEnglish.frontmatter.languageId,
+							workspacePath: workspace.uri.fsPath,
+							cancellationToken,
+							onRetry: codexRetryReporter(progress),
+							modelPreference: currentModelPreference(context),
+						}),
+					);
+					await reportModelResolution(context, interpreted);
+					const markdown = await renderedEnglishDocument(interpreted, {
+						sourcePath: capture.parsedEnglish.frontmatter.source,
+						sourceHash: capture.sourceHash,
+						languageId: capture.parsedEnglish.frontmatter.languageId,
+						source: capture.sourceText,
+						sourceUri: capture.sourceUri,
+						workspaceUri: workspace.uri,
+					});
+					const englishDocument = await vscode.workspace.openTextDocument(capture.englishUri);
+					const current = await sessions.captureForSource(capture.sourceUri);
+					if (!current
+						|| current.sourceHash !== capture.sourceHash
+						|| current.englishDocumentHash !== capture.englishDocumentHash) {
+						throw new Error('Code or English changed while Codex was refreshing the interpretation. The previous English was preserved.');
+					}
+					await replaceTextDocumentAndSave(englishDocument, capture.englishText, markdown);
+					const refreshed = await sessions.reload(capture.sourceUri);
+					if (refreshed?.state !== 'SYNCED') {
+						throw new Error('English was refreshed, but the synchronized baselines could not be verified.');
+					}
+					output.appendLine(`refresh:completed file=${fileName}`);
+					await vscode.window.showInformationMessage('LangClarity refreshed the English interpretation.');
+				},
+			});
 		}),
 	);
 }
@@ -573,7 +517,9 @@ async function renderedEnglishDocument(
 
 function registerCommandVisibility(): vscode.Disposable {
 	let revision = 0;
-	let indexRevision = 0;
+	const interpretedSourcePaths: Record<string, true> = {};
+	let indexBootstrapped = false;
+	const deferredIndexEvents: Array<{ type: 'create' | 'delete'; uri: vscode.Uri }> = [];
 	const refresh = async (): Promise<void> => {
 		const currentRevision = ++revision;
 		const document = vscode.window.activeTextEditor?.document;
@@ -582,7 +528,14 @@ function registerCommandVisibility(): vscode.Disposable {
 			const workspace = vscode.workspace.getWorkspaceFolder(document.uri);
 			if (workspace) {
 				try {
-					hasInterpretation = await uriExists(englishUriFor(workspace.uri, document.uri));
+					if (indexBootstrapped) {
+						hasInterpretation = Boolean(
+							interpretedSourcePaths[document.uri.path]
+							|| interpretedSourcePaths[document.uri.fsPath],
+						);
+					} else {
+						hasInterpretation = await uriExists(englishUriFor(workspace.uri, document.uri));
+					}
 				} catch {
 					hasInterpretation = false;
 				}
@@ -592,49 +545,87 @@ function registerCommandVisibility(): vscode.Disposable {
 			await vscode.commands.executeCommand('setContext', 'langclarity.activeHasInterpretation', hasInterpretation);
 		}
 	};
-	const refreshInterpretationIndex = async (): Promise<void> => {
-		const currentRevision = ++indexRevision;
-		const interpretedSourcePaths: Record<string, true> = {};
-		for (const englishUri of await vscode.workspace.findFiles('**/.langclarity/**/*.md')) {
-			const workspace = vscode.workspace.getWorkspaceFolder(englishUri);
-			if (!workspace) {
-				continue;
-			}
-			const relative = path.posix.relative(workspace.uri.path, englishUri.path);
-			const prefix = '.langclarity/';
-			if (!relative.startsWith(prefix) || !relative.endsWith('.md')) {
-				continue;
-			}
-			const sourceUri = vscode.Uri.joinPath(
-				workspace.uri,
-				relative.slice(prefix.length, -'.md'.length),
-			);
-			interpretedSourcePaths[sourceUri.path] = true;
-			interpretedSourcePaths[sourceUri.fsPath] = true;
-		}
-		if (currentRevision === indexRevision) {
-			await vscode.commands.executeCommand(
-				'setContext',
-				'langclarity.interpretedSourcePaths',
-				interpretedSourcePaths,
-			);
-		}
+	const publishInterpretationIndex = async (): Promise<void> => {
+		await vscode.commands.executeCommand(
+			'setContext',
+			'langclarity.interpretedSourcePaths',
+			{ ...interpretedSourcePaths },
+		);
 	};
-	const refreshPairContexts = (): void => {
-		void refresh();
-		void refreshInterpretationIndex();
+	const addEnglishToIndex = (englishUri: vscode.Uri): boolean => {
+		const keys = interpretedSourceKeysFor(englishUri);
+		if (!keys) {
+			return false;
+		}
+		interpretedSourcePaths[keys.path] = true;
+		interpretedSourcePaths[keys.fsPath] = true;
+		return true;
+	};
+	const removeEnglishFromIndex = (englishUri: vscode.Uri): boolean => {
+		const keys = interpretedSourceKeysFor(englishUri);
+		if (!keys) {
+			return false;
+		}
+		delete interpretedSourcePaths[keys.path];
+		delete interpretedSourcePaths[keys.fsPath];
+		return true;
+	};
+	const applyIndexEvent = (type: 'create' | 'delete', englishUri: vscode.Uri): boolean => {
+		return type === 'create' ? addEnglishToIndex(englishUri) : removeEnglishFromIndex(englishUri);
+	};
+	const bootstrapInterpretationIndex = async (): Promise<void> => {
+		for (const englishUri of await vscode.workspace.findFiles('**/.langclarity/**/*.md')) {
+			addEnglishToIndex(englishUri);
+		}
+		indexBootstrapped = true;
+		for (const event of deferredIndexEvents.splice(0)) {
+			applyIndexEvent(event.type, event.uri);
+		}
+		await publishInterpretationIndex();
+		await refresh();
 	};
 
 	const watcher = vscode.workspace.createFileSystemWatcher('**/.langclarity/**/*.md');
+	const onIndexEvent = (type: 'create' | 'delete') => (englishUri: vscode.Uri): void => {
+		if (!indexBootstrapped) {
+			deferredIndexEvents.push({ type, uri: englishUri });
+			void refresh();
+			return;
+		}
+		if (applyIndexEvent(type, englishUri)) {
+			void publishInterpretationIndex();
+		}
+		void refresh();
+	};
 	const disposables = [
 		watcher,
 		vscode.window.onDidChangeActiveTextEditor(() => void refresh()),
-		watcher.onDidCreate(refreshPairContexts),
-		watcher.onDidDelete(refreshPairContexts),
+		watcher.onDidCreate(onIndexEvent('create')),
+		watcher.onDidDelete(onIndexEvent('delete')),
 	];
 	void refresh();
-	void refreshInterpretationIndex();
+	void bootstrapInterpretationIndex();
 	return vscode.Disposable.from(...disposables);
+}
+
+function interpretedSourceKeysFor(englishUri: vscode.Uri): { path: string; fsPath: string } | undefined {
+	const workspace = vscode.workspace.getWorkspaceFolder(englishUri);
+	if (!workspace) {
+		return undefined;
+	}
+	const relative = path.posix.relative(workspace.uri.path, englishUri.path);
+	const prefix = '.langclarity/';
+	if (!relative.startsWith(prefix) || !relative.endsWith('.md')) {
+		return undefined;
+	}
+	const underLangClarity = relative.slice(prefix.length, -'.md'.length);
+	const segments = underLangClarity.split('/');
+	// Skip hidden trees under .langclarity (e.g. .orphaned/<uuid>/...).
+	if (segments.slice(0, -1).some((segment) => segment.startsWith('.'))) {
+		return undefined;
+	}
+	const sourceUri = vscode.Uri.joinPath(workspace.uri, underLangClarity);
+	return { path: sourceUri.path, fsPath: sourceUri.fsPath };
 }
 
 async function offerGitignoreChoice(
@@ -1025,23 +1016,8 @@ async function ensureProviderDisclosure(
 	return true;
 }
 
-async function reportOperationFailure(
-	output: vscode.OutputChannel,
-	operation: string,
-	fileName: string,
-	error: unknown,
-	fallback: string,
-): Promise<boolean> {
-	const message = error instanceof Error ? error.message : fallback;
-	const category = error instanceof UsageLimitedError
-		? 'usage-limited'
-		: error instanceof AuthenticationRequiredError
-			? 'authentication'
-			: error instanceof CodexResponseError
-				? 'codex'
-				: 'langclarity';
-	output.appendLine(`${operation}:failed category=${category} file=${fileName}`);
-	return await vscode.window.showErrorMessage(message, 'Retry') === 'Retry';
+export function deactivate(): void {
+	const disposable = activeInterpreter as { dispose?: () => void } | undefined;
+	disposable?.dispose?.();
+	activeInterpreter = undefined;
 }
-
-export function deactivate(): void {}

@@ -204,6 +204,8 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
+    "benchmark:fidelity": "npm run compile && vscode-test --grep \"Fidelity corpus\"",
+    "corpus:fidelity": "npm run compile && node out/fidelity/printCorpus.js",
     "package:vsix": "vsce package"
   },
   "dependencies": {

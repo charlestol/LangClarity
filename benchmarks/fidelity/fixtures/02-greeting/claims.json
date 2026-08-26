@@ -1,0 +1,19 @@
+{
+  "id": "02-greeting",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "mustHave": [
+    {
+      "id": "returns-hello",
+      "description": "Returns a Hello greeting that includes the name.",
+      "patterns": ["(?i)hello", "(?i)name"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-network",
+      "description": "Must not invent network or database work.",
+      "patterns": ["(?i)\\b(?:fetch|http|database|sql|api request)\\b"]
+    }
+  ]
+}

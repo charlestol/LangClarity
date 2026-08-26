@@ -1,0 +1,24 @@
+{
+  "corpusVersion": "1",
+  "promptVersionExpected": "6",
+  "description": "Interpretation-fidelity corpus for Code → English. Automated pattern scores are evidence for review, not proof of semantic correctness.",
+  "heldOutIds": [
+    "06-incomplete",
+    "08-react-button",
+    "12-nested-loops"
+  ],
+  "fixtures": [
+    { "id": "01-top-users", "tags": ["business-rules", "filter", "sort"] },
+    { "id": "02-greeting", "tags": ["function", "simple"] },
+    { "id": "03-counter-class", "tags": ["class"] },
+    { "id": "04-async-fetch", "tags": ["async", "error-handling"] },
+    { "id": "05-copy-mutate", "tags": ["mutation", "copy"] },
+    { "id": "06-incomplete", "tags": ["incomplete", "failure"] },
+    { "id": "07-plain-js", "tags": ["javascript"] },
+    { "id": "08-react-button", "tags": ["tsx", "react"] },
+    { "id": "09-exports", "tags": ["exports", "module"] },
+    { "id": "10-imports-local", "tags": ["imports", "cross-file"] },
+    { "id": "11-early-return", "tags": ["control-flow", "guard"] },
+    { "id": "12-nested-loops", "tags": ["hierarchy", "loops"] }
+  ]
+}

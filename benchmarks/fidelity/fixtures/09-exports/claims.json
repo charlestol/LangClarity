@@ -1,0 +1,24 @@
+{
+  "id": "09-exports",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "mustHave": [
+    {
+      "id": "exports-app-name",
+      "description": "Makes APP_NAME available as LangClarity.",
+      "patterns": ["(?i)APP_NAME|app name", "(?i)LangClarity"]
+    },
+    {
+      "id": "format-label",
+      "description": "formatLabel prefixes the value with the app name.",
+      "patterns": ["(?i)formatLabel|format label|label", "(?i)LangClarity|APP_NAME|app name"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-network",
+      "description": "Must not invent network calls.",
+      "patterns": ["(?i)\\b(?:fetch|http|axios)\\b"]
+    }
+  ]
+}

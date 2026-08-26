@@ -28,6 +28,9 @@ interface PendingProposal {
 	syntaxErrors: SyntaxIssue[];
 	diagnostics: vscode.Diagnostic[];
 	refreshEnglish: RefreshProposedEnglish;
+	refreshCancellation?: vscode.CancellationTokenSource;
+	refreshPromise?: Promise<string>;
+	refreshOnRetry: { current: (() => void) | undefined };
 }
 
 export type RefreshProposedEnglish = (
@@ -84,6 +87,7 @@ export class ProposalCoordinator implements vscode.Disposable {
 			syntaxErrors: await syntaxIssues(proposedSource, capture.sourceUri.path),
 			diagnostics: [],
 			refreshEnglish,
+			refreshOnRetry: { current: undefined },
 		};
 		this.proposalsBySource.set(capture.sourceUri.toString(), proposal);
 		this.provider.set(proposalUri, proposedSource);
@@ -111,8 +115,11 @@ export class ProposalCoordinator implements vscode.Disposable {
 			await vscode.window.showErrorMessage(
 				`LangClarity proposal has ${proposal.syntaxErrors.length} syntax error(s) and cannot be applied. First error at ${first.line}:${first.column}: ${first.message}`,
 			);
+			this.discard(proposal);
 			return;
 		}
+
+		this.beginEnglishRefresh(proposal);
 
 		proposal.diagnostics = await collectProposalDiagnostics(proposalDocument);
 		const diagnostics = proposal.diagnostics.length;
@@ -136,10 +143,32 @@ export class ProposalCoordinator implements vscode.Disposable {
 	}
 
 	dispose(): void {
+		for (const proposal of this.proposalsBySource.values()) {
+			this.cancelEnglishRefresh(proposal);
+		}
 		for (const disposable of this.disposables) {
 			disposable.dispose();
 		}
 		this.proposalsBySource.clear();
+	}
+
+	private beginEnglishRefresh(proposal: PendingProposal): void {
+		const refreshCancellation = new vscode.CancellationTokenSource();
+		proposal.refreshCancellation = refreshCancellation;
+		proposal.refreshPromise = proposal.refreshEnglish(
+			proposal.proposedSource,
+			refreshCancellation.token,
+			() => proposal.refreshOnRetry.current?.(),
+		);
+	}
+
+	private cancelEnglishRefresh(proposal: PendingProposal): void {
+		proposal.refreshCancellation?.cancel();
+		proposal.refreshCancellation?.dispose();
+		proposal.refreshCancellation = undefined;
+		void proposal.refreshPromise?.catch(() => undefined);
+		proposal.refreshPromise = undefined;
+		proposal.refreshOnRetry.current = undefined;
 	}
 
 	private async apply(proposal: PendingProposal): Promise<void> {
@@ -150,17 +179,32 @@ export class ProposalCoordinator implements vscode.Disposable {
 			this.discard(proposal);
 			throw new Error('Code or English changed after this proposal was created. Generate a new proposal.');
 		}
+		const refreshPromise = proposal.refreshPromise;
+		if (!refreshPromise) {
+			this.discard(proposal);
+			throw new Error('The interpretation refresh was not started for this proposal.');
+		}
 		let refreshedEnglish: string;
 		try {
 			refreshedEnglish = await vscode.window.withProgress({
 				location: vscode.ProgressLocation.Notification,
 				title: `LangClarity: Updating the complete interpretation for ${path.posix.basename(proposal.sourceUri.path)}`,
 				cancellable: true,
-			}, async (progress, cancellationToken) => proposal.refreshEnglish(
-				proposal.proposedSource,
-				cancellationToken,
-				() => progress.report({ message: 'Codex is retrying.' }),
-			));
+			}, async (progress, cancellationToken) => {
+				proposal.refreshOnRetry.current = () => progress.report({ message: 'Codex is retrying.' });
+				const cancelSub = cancellationToken.onCancellationRequested(() => {
+					proposal.refreshCancellation?.cancel();
+				});
+				try {
+					if (cancellationToken.isCancellationRequested) {
+						proposal.refreshCancellation?.cancel();
+					}
+					return await refreshPromise;
+				} finally {
+					cancelSub.dispose();
+					proposal.refreshOnRetry.current = undefined;
+				}
+			});
 			validateProposalRefresh(refreshedEnglish, {
 				sourceHash: proposal.proposedSourceHash,
 				source: current.parsedEnglish.frontmatter.source,
@@ -228,6 +272,7 @@ export class ProposalCoordinator implements vscode.Disposable {
 	}
 
 	private discard(proposal: PendingProposal): void {
+		this.cancelEnglishRefresh(proposal);
 		this.proposalsBySource.delete(proposal.sourceUri.toString());
 		this.provider.delete(proposal.proposalUri);
 	}

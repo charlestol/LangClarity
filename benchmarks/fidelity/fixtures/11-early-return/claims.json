@@ -1,0 +1,24 @@
+{
+  "id": "11-early-return",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "mustHave": [
+    {
+      "id": "rejects-blank",
+      "description": "Blank input yields no number.",
+      "patterns": ["(?i)empty|blank|trim|no (?:text|input|value)", "(?i)undefined|nothing|missing|no number"]
+    },
+    {
+      "id": "requires-positive-int",
+      "description": "Only finite positive integers are accepted.",
+      "patterns": ["(?i)positive|greater than 0|>\\s*0", "(?i)integer|whole"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-default-zero",
+      "description": "Must not claim invalid input becomes 0.",
+      "patterns": ["(?i)return(?:s|ing)?\\s+0\\b.*(?:invalid|fail|error)", "(?i)default(?:s)?\\s+to\\s+0"]
+    }
+  ]
+}

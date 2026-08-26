@@ -1,0 +1,27 @@
+{
+  "id": "05-copy-mutate",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "mustHave": [
+    {
+      "id": "copies-ids",
+      "description": "Works on a copy of the id list, not only the original binding.",
+      "patterns": ["(?i)copy|clone|new (?:list|array)|spread|duplicate"]
+    },
+    {
+      "id": "adds-active",
+      "description": "Adds the value active to the result.",
+      "patterns": ["(?i)active"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "mutates-input-ids",
+      "description": "Must not claim the original input ids array is mutated.",
+      "patterns": [
+        "(?i)mutat(?:e|es|ing).*(?:input|original).*ids?",
+        "(?i)(?:change|modify)s?\\s+(?:the\\s+)?(?:input|original)\\s+ids?"
+      ]
+    }
+  ]
+}

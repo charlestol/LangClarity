@@ -3,7 +3,9 @@
 .github/**
 docs/**
 src/**
+benchmarks/**
 out/test/**
+out/fidelity/**
 .gitignore
 .DS_Store
 **/tsconfig.json

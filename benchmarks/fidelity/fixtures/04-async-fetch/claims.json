@@ -1,0 +1,34 @@
+{
+  "id": "04-async-fetch",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "mustHave": [
+    {
+      "id": "fetches-url",
+      "description": "Requests the given URL.",
+      "patterns": ["(?i)fetch|request|download|get", "(?i)url"]
+    },
+    {
+      "id": "checks-ok",
+      "description": "Treats a non-OK response as failure.",
+      "patterns": ["(?i)ok|status|fail|error|success"]
+    },
+    {
+      "id": "returns-title-or-empty",
+      "description": "Returns the title when present, otherwise an empty string; errors also yield empty.",
+      "patterns": ["(?i)title", "(?i)empty|blank|''|\"\""]
+    },
+    {
+      "id": "logs-errors",
+      "description": "Logs failures.",
+      "patterns": ["(?i)log|console|print|report"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-retry-loop",
+      "description": "Must not invent automatic retries.",
+      "patterns": ["(?i)retr(?:y|ies)|try again automatically"]
+    }
+  ]
+}

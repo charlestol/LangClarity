@@ -1,0 +1,25 @@
+{
+  "id": "12-nested-loops",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "notes": "Held-out hierarchy/nested-loop fixture.",
+  "mustHave": [
+    {
+      "id": "nested-iteration",
+      "description": "Walks pairs of values with nested loops.",
+      "patterns": ["(?i)(?:for each|loop|nested|inner|pair)", "(?i)pair|combination|two"]
+    },
+    {
+      "id": "skips-equal",
+      "description": "Skips pairs where both values are equal.",
+      "patterns": ["(?i)equal|same|identical|!==|different"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-sort",
+      "description": "Must not claim the input is sorted.",
+      "patterns": ["(?i)sort(?:s|ed|ing)?\\s+(?:the\\s+)?(?:input|values|list|array)"]
+    }
+  ]
+}

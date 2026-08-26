@@ -1,0 +1,25 @@
+{
+  "id": "08-react-button",
+  "languageId": "typescriptreact",
+  "sourceFile": "source.tsx",
+  "notes": "Held-out React/TSX fixture.",
+  "mustHave": [
+    {
+      "id": "save-button",
+      "description": "Renders a Save button.",
+      "patterns": ["(?i)save", "(?i)button"]
+    },
+    {
+      "id": "disabled-and-click",
+      "description": "Honors disabled and calls onSave when clicked.",
+      "patterns": ["(?i)disabled|disable", "(?i)click|onSave|save (?:handler|callback|function)"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-form-submit",
+      "description": "Must not claim this submits an HTML form.",
+      "patterns": ["(?i)submit(?:s|ting)?\\s+(?:the\\s+)?form"]
+    }
+  ]
+}

@@ -50,6 +50,7 @@ suite('Extension contributions', () => {
 		assert.ok(manifest.activationEvents?.includes('onCommand:langclarity.codeToEnglish'));
 		assert.ok(manifest.activationEvents?.includes('onCommand:langclarity.selectModel'));
 		assert.ok(manifest.activationEvents?.includes('onCommand:langclarity.addToGitignore'));
+		assert.ok(manifest.activationEvents?.includes('onCustomEditor:langclarity.interpretationView'));
 		assert.ok(manifest.activationEvents?.includes('workspaceContains:**/.langclarity/**/*.md'));
 		assert.ok(manifest.contributes?.customEditors?.some((item) => item.viewType === 'langclarity.interpretationView'
 			&& item.selector?.some((selector) => selector.filenamePattern === '**/.langclarity/**/*.md')));
@@ -110,6 +111,10 @@ suite('Extension contributions', () => {
 			path.join(__dirname, '..', 'interpretationViewProvider.js'),
 			'utf8',
 		);
+		const script = readFileSync(
+			path.join(__dirname, '..', '..', 'media', 'interpretationView.js'),
+			'utf8',
+		);
 		const stylesheet = readFileSync(
 			path.join(__dirname, '..', '..', 'media', 'interpretationView.css'),
 			'utf8',
@@ -117,43 +122,48 @@ suite('Extension contributions', () => {
 
 		assert.match(provider, /asWebviewUri/u);
 		assert.match(provider, /localResourceRoots/u);
+		assert.match(provider, /interpretationView\.js/u);
+		assert.match(provider, /PANE_SYNC_DEBOUNCE_MS/u);
+		assert.match(provider, /paneBehaviorSectionEdit/u);
 		assert.match(provider, /<link rel="stylesheet"/u);
+		assert.match(provider, /<script nonce="\$\{nonce\}" src="\$\{scriptUri\}"><\/script>/u);
 		assert.doesNotMatch(provider, /<style>/u);
 		assert.doesNotMatch(provider, /unsafe-inline/u);
+		assert.doesNotMatch(provider, /function exactRow/u);
 		assert.match(provider, /id="behavior-gutter"/u);
-		assert.match(provider, /gutter\.replaceChildren\(fragment\)/u);
-		assert.match(provider, /activeGutterIndex/u);
-		assert.match(provider, /function behaviorPayload\(\) \{ return behavior\.map\(\(item\) => item\.statement\); \}/u);
 		assert.match(provider, /<textarea id="behavior-text"/u);
 		assert.match(provider, /rows="1"/u);
-		assert.match(provider, /function syncEditorRows/u);
-		assert.match(provider, /\.rows = Math\.max\(1, behavior\.length\)/u);
-		assert.doesNotMatch(provider, /\.style\./u);
+		assert.match(provider, /id="cursor-position"/u);
+		assert.match(provider, /id="suggested-action"/u);
+		assert.match(provider, /data-tab="behavior">English Code</u);
+		assert.doesNotMatch(provider, /<h2>English Code<\/h2>/u);
+		assert.doesNotMatch(provider, /data-command="langclarity\.englishToCode"/u);
+		assert.doesNotMatch(provider, /data-command="langclarity\.codeToEnglish"/u);
+		assert.doesNotMatch(provider, /id="behavior-items"/u);
+		assert.doesNotMatch(provider, /id="add"/u);
+		assert.match(script, /gutter\.replaceChildren\(fragment\)/u);
+		assert.match(script, /activeGutterIndex/u);
+		assert.match(script, /function behaviorPayload\(\) \{ return behavior\.map\(\(item\) => item\.statement\); \}/u);
+		assert.match(script, /function syncEditorRows/u);
+		assert.match(script, /\.rows = Math\.max\(1, behavior\.length\)/u);
+		assert.doesNotMatch(script, /\.style\./u);
+		assert.doesNotMatch(script, /gutter'\)\.scrollTop/u);
+		assert.match(script, /sourceLineCount/u);
+		assert.doesNotMatch(script, /Everyday English, exactly one row per source line/u);
+		assert.match(script, /function exactRow/u);
+		assert.doesNotMatch(script, /event\.key === 'Enter'/u);
+		assert.match(script, /event\.key !== 'Tab'/u);
+		assert.match(script, /line\.addEventListener\('click'/u);
+		assert.match(script, /Review & Apply English → Code/u);
+		assert.match(script, /Apply Code → English/u);
+		assert.match(script, /Choose Apply Direction/u);
+		assert.match(script, /message\.type === 'documentSaved'/u);
 		assert.match(stylesheet, /overflow-y: hidden/u);
 		assert.match(stylesheet, /main \{ padding: 20px 0 48px; \}/u);
 		assert.match(stylesheet, /\.panel \{ box-sizing: border-box; display: none; width: 100%; \}/u);
 		assert.doesNotMatch(stylesheet, /#overview, #structure, #effects/u);
 		assert.doesNotMatch(stylesheet, /main \{ max-width: 920px/u);
 		assert.doesNotMatch(stylesheet, /height: min\(58vh, 620px\)/u);
-		assert.doesNotMatch(provider, /gutter'\)\.scrollTop/u);
-		assert.match(provider, /sourceLineCount/u);
-		assert.doesNotMatch(provider, /Everyday English, exactly one row per source line/u);
-		assert.match(provider, /function exactRow/u);
-		assert.doesNotMatch(provider, /event\.key === 'Enter'/u);
-		assert.match(provider, /event\.key !== 'Tab'/u);
-		assert.match(provider, /id="cursor-position"/u);
-		assert.match(provider, /line\.addEventListener\('click'/u);
-		assert.match(provider, /id="suggested-action"/u);
-		assert.match(provider, /data-tab="behavior">English Code</u);
-		assert.doesNotMatch(provider, /<h2>English Code<\/h2>/u);
-		assert.match(provider, /Review & Apply English → Code/u);
-		assert.match(provider, /Apply Code → English/u);
-		assert.match(provider, /Choose Apply Direction/u);
-		assert.doesNotMatch(provider, /data-command="langclarity\.englishToCode"/u);
-		assert.doesNotMatch(provider, /data-command="langclarity\.codeToEnglish"/u);
-		assert.match(provider, /message\.type === 'documentSaved'/u);
-		assert.doesNotMatch(provider, /id="behavior-items"/u);
-		assert.doesNotMatch(provider, /id="add"/u);
 	});
 
 	test('requests exact source-aligned everyday English from Codex', () => {

@@ -54,7 +54,17 @@ export function interpretationPaneContent(
 	};
 }
 
-export function replacePaneBehavior(markdown: string, items: PaneBehaviorItem[]): string {
+export interface PaneBehaviorSectionEdit {
+	startOffset: number;
+	endOffset: number;
+	replacement: string;
+	updatedText: string;
+}
+
+export function paneBehaviorSectionEdit(
+	markdown: string,
+	items: PaneBehaviorItem[],
+): PaneBehaviorSectionEdit {
 	const heading = /^## Behavior\r?$/mu.exec(markdown);
 	const generatedIndex = markdown.indexOf(generatedStart, (heading?.index ?? 0) + (heading?.[0].length ?? 0));
 	if (!heading || generatedIndex < 0) {
@@ -70,11 +80,19 @@ export function replacePaneBehavior(markdown: string, items: PaneBehaviorItem[])
 			return `${index + 1}. ${escapeMarkdown(item.statement)}${suffix}`;
 		}).join('\n');
 	const eol = markdown.includes('\r\n') ? '\r\n' : '\n';
-	const updated = markdown.slice(0, heading.index + heading[0].length)
-		+ `${eol}${eol}${behavior.replaceAll('\n', eol)}${eol}${eol}`
-		+ markdown.slice(generatedIndex);
-	parseEnglishDocument(updated);
-	return updated;
+	const startOffset = heading.index + heading[0].length;
+	const endOffset = generatedIndex;
+	const replacement = `${eol}${eol}${behavior.replaceAll('\n', eol)}${eol}${eol}`;
+	return {
+		startOffset,
+		endOffset,
+		replacement,
+		updatedText: markdown.slice(0, startOffset) + replacement + markdown.slice(endOffset),
+	};
+}
+
+export function replacePaneBehavior(markdown: string, items: PaneBehaviorItem[]): string {
+	return paneBehaviorSectionEdit(markdown, items).updatedText;
 }
 
 export function behaviorRowsForSource(
@@ -90,33 +108,18 @@ export function behaviorRowsForSource(
 			evidenceSuffix: `_(${index + 1}–${index + 1})_`,
 		}),
 	);
-	for (const item of items) {
-		const first = item.startLine
-			? Math.max(0, Math.min(rows.length - 1, item.startLine - 1))
-			: 0;
-		const last = item.endLine
-			? Math.max(first, Math.min(rows.length - 1, item.endLine - 1))
-			: rows.length - 1;
-		let target = first;
-		while (target <= last && rows[target].statement.length > 0) {
-			target += 1;
-		}
-		if (target > last) {
-			target = first;
-		}
-		if (rows[target].statement.length > 0) {
-			const startLine = Math.min(rows[target].startLine ?? target + 1, item.startLine ?? target + 1);
-			const endLine = Math.max(rows[target].endLine ?? target + 1, item.endLine ?? target + 1);
-			rows[target] = {
-				statement: `${rows[target].statement} ${singleLine(item.statement)}`,
-				evidence: `Lines ${startLine}–${endLine}`,
-				evidenceSuffix: `_(${startLine}–${endLine})_`,
-				startLine,
-				endLine,
-			};
-		} else {
-			rows[target] = { ...rows[target], ...item, statement: singleLine(item.statement) };
-		}
+	for (const [itemIndex, item] of items.entries()) {
+		const sourceLine = item.startLine ?? item.endLine ?? (itemIndex + 1);
+		const index = Math.max(0, Math.min(rows.length - 1, sourceLine - 1));
+		const line = index + 1;
+		rows[index] = {
+			...rows[index],
+			...item,
+			statement: singleLine(item.statement),
+			startLine: line,
+			endLine: line,
+			evidenceSuffix: item.evidenceSuffix ?? `_(${line}–${line})_`,
+		};
 	}
 	return rows;
 }

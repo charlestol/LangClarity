@@ -1,0 +1,20 @@
+{
+  "id": "06-incomplete",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "notes": "Held-out incomplete fixture. Scoring still applies if a structured result returns; runs may also fail schema validation.",
+  "mustHave": [
+    {
+      "id": "sums-values",
+      "description": "If interpreted, should describe adding numbers from the list.",
+      "patterns": ["(?i)sum|add|total", "(?i)value|number|list|array"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-invented-file-io",
+      "description": "Must not invent reading from a file.",
+      "patterns": ["(?i)\\b(?:readFile|fs\\.|filesystem)\\b"]
+    }
+  ]
+}

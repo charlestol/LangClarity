@@ -9,7 +9,7 @@ import { hashText, MAX_SOURCE_LINES } from './interpretation';
 import {
 	behaviorRowsForSource,
 	interpretationPaneContent,
-	replacePaneBehavior,
+	paneBehaviorSectionEdit,
 	type PaneBehaviorItem,
 } from './interpretationPaneDocument';
 
@@ -19,12 +19,15 @@ const allowedSyncCommands = new Set([
 	'langclarity.englishToCode',
 	'langclarity.chooseSyncDirection',
 ]);
+const PANE_SYNC_DEBOUNCE_MS = 150;
 
 type PaneMessage =
 	| { type: 'ready' }
 	| { type: 'update'; behavior: unknown }
 	| { type: 'save'; behavior: unknown }
 	| { type: 'command'; command: unknown; behavior: unknown };
+
+type PendingPaneRefresh = 'state' | 'content';
 
 export class InterpretationViewProvider implements vscode.CustomTextEditorProvider {
 	constructor(
@@ -38,9 +41,12 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 		panel.webview.html = paneHtml(
 			panel.webview,
 			panel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'interpretationView.css')),
+			panel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'interpretationView.js')),
 		);
 		let lastAppliedText: string | undefined;
 		let sourceUri: vscode.Uri | undefined;
+		let pendingRefresh: PendingPaneRefresh | undefined;
+		let refreshTimer: NodeJS.Timeout | undefined;
 		const resolvedSourceUri = (): vscode.Uri => {
 			sourceUri ??= this.sourceUriForEnglish(document);
 			return sourceUri;
@@ -101,21 +107,48 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 			}
 		};
 
+		const scheduleRefresh = (kind: PendingPaneRefresh): void => {
+			pendingRefresh = pendingRefresh === 'content' || kind === 'content' ? 'content' : 'state';
+			if (refreshTimer) {
+				clearTimeout(refreshTimer);
+			}
+			refreshTimer = setTimeout(() => {
+				refreshTimer = undefined;
+				const refresh = pendingRefresh;
+				pendingRefresh = undefined;
+				if (refresh === 'content') {
+					void sendContent();
+				} else if (refresh === 'state') {
+					void sendState();
+				}
+			}, PANE_SYNC_DEBOUNCE_MS);
+		};
+
 		const updateBehavior = async (rawBehavior: unknown, save: boolean): Promise<boolean> => {
 			try {
 				const behavior = validBehavior(rawBehavior);
 				const currentText = document.getText();
-				const updatedText = replacePaneBehavior(currentText, behavior);
-				if (updatedText !== currentText) {
+				const sectionEdit = paneBehaviorSectionEdit(currentText, behavior);
+				if (sectionEdit.updatedText !== currentText) {
 					const edit = new vscode.WorkspaceEdit();
-					edit.replace(document.uri, fullDocumentRange(document, currentText.length), updatedText);
-					lastAppliedText = updatedText;
+					edit.replace(
+						document.uri,
+						new vscode.Range(
+							document.positionAt(sectionEdit.startOffset),
+							document.positionAt(sectionEdit.endOffset),
+						),
+						sectionEdit.replacement,
+					);
+					lastAppliedText = sectionEdit.updatedText;
 					if (!await vscode.workspace.applyEdit(edit)) {
 						throw new Error('VS Code could not update the interpretation document.');
 					}
 				}
-				if (save && !await document.save()) {
-					throw new Error('VS Code could not save the interpretation document.');
+				if (save) {
+					parseEnglishDocument(document.getText());
+					if (!await document.save()) {
+						throw new Error('VS Code could not save the interpretation document.');
+					}
 				}
 				await panel.webview.postMessage({ type: 'saved', saved: save });
 				await sendState();
@@ -165,7 +198,7 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 
 		const changeSubscription = vscode.workspace.onDidChangeTextDocument((event) => {
 			if (sourceUri && event.document.uri.toString() === sourceUri.toString()) {
-				void sendState();
+				scheduleRefresh('content');
 				return;
 			}
 			if (event.document.uri.toString() !== document.uri.toString()) {
@@ -173,10 +206,10 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 			}
 			if (lastAppliedText === document.getText()) {
 				lastAppliedText = undefined;
-				void sendState();
+				scheduleRefresh('state');
 				return;
 			}
-			void sendContent();
+			scheduleRefresh('content');
 		});
 		const saveSubscription = vscode.workspace.onDidSaveTextDocument((savedDocument) => {
 			const englishSaved = savedDocument.uri.toString() === document.uri.toString();
@@ -202,6 +235,9 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 			})();
 		});
 		panel.onDidDispose(() => {
+			if (refreshTimer) {
+				clearTimeout(refreshTimer);
+			}
 			changeSubscription.dispose();
 			saveSubscription.dispose();
 		});
@@ -227,11 +263,7 @@ function validBehavior(value: unknown): PaneBehaviorItem[] {
 	});
 }
 
-function fullDocumentRange(document: vscode.TextDocument, textLength: number): vscode.Range {
-	return new vscode.Range(document.positionAt(0), document.positionAt(textLength));
-}
-
-function paneHtml(webview: vscode.Webview, stylesheetUri: vscode.Uri): string {
+function paneHtml(webview: vscode.Webview, stylesheetUri: vscode.Uri, scriptUri: vscode.Uri): string {
 	const nonce = randomBytes(16).toString('base64');
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -265,69 +297,7 @@ function paneHtml(webview: vscode.Webview, stylesheetUri: vscode.Uri): string {
 		<section class="panel" id="structure"></section>
 		<section class="panel" id="effects"></section>
 	</main>
-	<script nonce="${nonce}">
-		const vscode = acquireVsCodeApi();
-		let behavior = [];
-		let sourceLineCount = 1;
-		let loaded = false;
-		let updateTimer;
-		let activeGutterIndex = -1;
-		const byId = (id) => document.getElementById(id);
-		function behaviorPayload() { return behavior.map((item) => item.statement); }
-		function singleLine(value) { return value.split(String.fromCharCode(10)).map((part, index) => index === 0 ? part.trimEnd() : part.trim()).join(' ').trimEnd(); }
-		function exactRow(statement, index) { const line = index + 1; return { statement, evidence: 'Line ' + String(line), evidenceSuffix: '_(' + String(line) + '–' + String(line) + ')_', startLine: line, endLine: line }; }
-		function editorPosition(input) { let line = 1; let lastBreak = -1; for (let index = 0; index < input.selectionStart; index += 1) { if (input.value.charCodeAt(index) === 10) { line += 1; lastBreak = index; } } return { line, column: input.selectionStart - lastBreak }; }
-		function updateEditorPosition() { const input = byId('behavior-text'); const position = editorPosition(input); byId('cursor-position').textContent = 'Ln ' + String(position.line) + ', Col ' + String(position.column); const nextIndex = position.line - 1; if (nextIndex !== activeGutterIndex) { const gutter = byId('behavior-gutter'); gutter.children[activeGutterIndex]?.classList.remove('active'); gutter.children[nextIndex]?.classList.add('active'); activeGutterIndex = nextIndex; } }
-		function lineOffset(value, lineIndex) { const newline = String.fromCharCode(10); let offset = 0; for (let index = 0; index < lineIndex; index += 1) { const next = value.indexOf(newline, offset); if (next < 0) return value.length; offset = next + 1; } return offset; }
-		function replaceText(input, start, end, replacement, selectionMode) { input.setRangeText(replacement, start, end, selectionMode || 'end'); input.dispatchEvent(new Event('input', { bubbles: true })); }
-		function setStatus(status) { const labels = { SYNCED: 'Synced', CODE_CHANGED: 'Code changed', ENGLISH_CHANGED: 'English changed', BOTH_CHANGED: 'Both changed' }; byId('status').textContent = labels[status] || status; showSuggestedAction(status); }
-		function showSuggestedAction(status) {
-			const actions = {
-				CODE_CHANGED: { label: 'Apply Code → English', command: 'langclarity.codeToEnglish' },
-				ENGLISH_CHANGED: { label: 'Review & Apply English → Code', command: 'langclarity.englishToCode' },
-				BOTH_CHANGED: { label: 'Choose Apply Direction…', command: 'langclarity.chooseSyncDirection' },
-			};
-			const action = actions[status]; const button = byId('suggested-action');
-			if (!action) { button.hidden = true; return; }
-			button.textContent = action.label; button.dataset.suggestedCommand = action.command; button.hidden = false;
-		}
-		function scheduleUpdate() { clearTimeout(updateTimer); byId('save-state').textContent = 'Edited'; updateTimer = setTimeout(() => vscode.postMessage({ type: 'update', behavior: behaviorPayload() }), 400); }
-		function flush(type, command) { if (!loaded && command !== 'langclarity.openMarkdown') return; clearTimeout(updateTimer); vscode.postMessage({ type, command, behavior: behaviorPayload() }); }
-		function syncEditorRows() { byId('behavior-text').rows = Math.max(1, behavior.length); }
-		function renderBehavior() {
-			const input = byId('behavior-text');
-			input.value = behavior.map((item) => singleLine(item.statement)).join(String.fromCharCode(10));
-			syncEditorRows();
-			renderGutter();
-			updateEditorPosition();
-		}
-		function renderGutter() {
-			const gutter = byId('behavior-gutter');
-			if (gutter.children.length !== behavior.length) { const fragment = document.createDocumentFragment(); behavior.forEach((_item, index) => { const line = document.createElement('div'); line.textContent = String(index + 1); line.addEventListener('click', () => { const input = byId('behavior-text'); const offset = lineOffset(input.value, index); input.focus(); input.setSelectionRange(offset, offset); updateEditorPosition(); }); fragment.appendChild(line); }); gutter.replaceChildren(fragment); activeGutterIndex = -1; }
-			behavior.forEach((item, index) => { const line = gutter.children[index]; const mapped = item.statement.length > 0; line.classList.toggle('mapped', mapped); line.title = mapped ? item.evidence || ('Source line ' + String(index + 1)) : ''; });
-		}
-		function renderReadonly(id, sections) {
-			const root = byId(id); root.textContent = '';
-			sections.forEach((section) => { const card = document.createElement('div'); card.className = 'readonly-section'; const heading = document.createElement('h3'); heading.textContent = section.heading; const content = document.createElement('div'); content.className = 'readonly-content'; content.textContent = section.content || 'None identified.'; card.append(heading, content); root.appendChild(card); });
-		}
-		document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => { document.querySelectorAll('.tab, .panel').forEach((item) => item.classList.remove('active')); tab.classList.add('active'); byId(tab.dataset.tab).classList.add('active'); }));
-		document.querySelectorAll('[data-command]').forEach((button) => button.addEventListener('click', () => flush('command', button.dataset.command)));
-		byId('suggested-action').addEventListener('click', (event) => flush('command', event.currentTarget.dataset.suggestedCommand));
-		byId('save').addEventListener('click', () => flush('save'));
-		byId('behavior-text').addEventListener('input', (event) => { const lines = event.target.value.split(String.fromCharCode(10)); const needsPadding = lines.length < sourceLineCount; while (lines.length < sourceLineCount) lines.push(''); behavior = lines.map((statement, index) => exactRow(statement, index)); if (needsPadding) event.target.value = behavior.map((item) => singleLine(item.statement)).join(String.fromCharCode(10)); syncEditorRows(); renderGutter(); updateEditorPosition(); scheduleUpdate(); });
-		byId('behavior-text').addEventListener('keydown', (event) => { if (event.key !== 'Tab') return; event.preventDefault(); const input = event.target; if (input.selectionStart !== input.selectionEnd) { const start = lineOffset(input.value, editorPosition({ value: input.value, selectionStart: input.selectionStart }).line - 1); const newline = String.fromCharCode(10); const selected = input.value.slice(start, input.selectionEnd); const replacement = selected.split(newline).map((line) => event.shiftKey ? (line.startsWith('  ') ? line.slice(2) : line.startsWith(' ') ? line.slice(1) : line) : '  ' + line).join(newline); replaceText(input, start, input.selectionEnd, replacement, 'select'); } else if (event.shiftKey) { const start = lineOffset(input.value, editorPosition(input).line - 1); const removable = input.value.slice(start, input.selectionStart).endsWith('  ') ? 2 : input.value.slice(start, input.selectionStart).endsWith(' ') ? 1 : 0; if (removable > 0) replaceText(input, input.selectionStart - removable, input.selectionStart, '', 'end'); } else { replaceText(input, input.selectionStart, input.selectionEnd, '  ', 'end'); } });
-		['click', 'keyup', 'select'].forEach((name) => byId('behavior-text').addEventListener(name, updateEditorPosition));
-		document.addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); flush('save'); } });
-		window.addEventListener('message', (event) => {
-			const message = event.data;
-			if (message.type === 'content') { const content = message.content; sourceLineCount = Math.max(1, content.sourceLineCount); behavior = content.behavior; loaded = true; byId('source').textContent = content.source; byId('meta').textContent = 'Model: ' + content.model + ' · Interpreted ' + new Date(content.interpretedAt).toLocaleString(); setStatus(content.status); renderBehavior(); renderReadonly('overview', content.overview); renderReadonly('structure', content.structure); renderReadonly('effects', content.effects); byId('error').hidden = true; }
-			if (message.type === 'status') { setStatus(message.status); }
-			if (message.type === 'error') { byId('suggested-action').hidden = true; byId('error').textContent = message.message; byId('error').hidden = false; }
-			if (message.type === 'saved') { byId('save-state').textContent = message.saved ? 'Saved' : 'Edited'; }
-			if (message.type === 'documentSaved') { setStatus(message.status); }
-		});
-		vscode.postMessage({ type: 'ready' });
-	</script>
+	<script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
 }

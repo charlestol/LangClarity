@@ -1,0 +1,19 @@
+{
+  "id": "07-plain-js",
+  "languageId": "javascript",
+  "sourceFile": "source.js",
+  "mustHave": [
+    {
+      "id": "clamps-range",
+      "description": "Keeps the value between min and max.",
+      "patterns": ["(?i)min", "(?i)max", "(?i)between|within|clamp|limit|bound"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-rounding",
+      "description": "Must not claim the value is rounded.",
+      "patterns": ["(?i)round(?:s|ed|ing)?\\b"]
+    }
+  ]
+}

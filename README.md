@@ -105,6 +105,8 @@ Use **View: Toggle Output** and select **LangClarity** for redacted operation ca
 
 Run `npm install`, then `npm test`.
 
+Interpretation-fidelity corpus (12 fixtures, held-out split, deterministic claim scoring): see `benchmarks/fidelity/README.md`. List fixtures with `npm run corpus:fidelity`. Live Codex runs: `LANGCLARITY_FIDELITY_TEST=1 npm run benchmark:fidelity`.
+
 To launch the Extension Development Host without F5:
 
 1. Open this repository folder in VS Code.

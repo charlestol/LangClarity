@@ -27,7 +27,11 @@ const MINIMUM_CODEX_VERSION = '0.148.0-alpha.15';
 const MAX_PROTOCOL_LINE_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const TURN_TIMEOUT_MS = 180_000;
+const VERSION_CHECK_TIMEOUT_MS = 15_000;
 const MAX_NOTIFICATIONS = 10_000;
+const MAX_WARM_CLIENTS = 2;
+const MODEL_LIST_CACHE_TTL_MS = 5 * 60_000;
+const IDLE_CLIENT_TTL_MS = 10 * 60_000;
 const supportedVersionChecks = new Map<string, Promise<void>>();
 const DISABLED_CODEX_FEATURES = [
 	'apps',
@@ -58,6 +62,10 @@ const FORBIDDEN_TOOL_ITEM_TYPES = new Set([
 	'toolSearch',
 	'webSearch',
 ]);
+const CancellationTokenNone: vscode.CancellationToken = {
+	isCancellationRequested: false,
+	onCancellationRequested: () => ({ dispose() { /* no-op */ } }),
+};
 
 export const englishToCodeSchema = {
 	type: 'object',
@@ -134,21 +142,18 @@ export class AuthenticationRequiredError extends CodexResponseError {}
 export class UsageLimitedError extends CodexResponseError {}
 
 export class CodexInterpreter {
+	private readonly pools = new Map<string, AppServerClientPool>();
+	private disposed = false;
+
 	async listModels(_workspacePath: string): Promise<CodexModel[]> {
-		const executable = resolveCodexExecutable();
-		await assertSupportedVersion(executable);
-		const client = new AppServerClient(executable);
-		try {
-			await client.start();
+		return this.withClient(CancellationTokenNone, async (client, pool) => {
 			await assertChatGPTAccount(client);
-			const models = await readVisibleModels(client);
+			const models = await pool.readVisibleModels(client, { forceRefresh: true });
 			if (models.length === 0) {
 				throw new Error('Codex returned no available models.');
 			}
 			return models;
-		} finally {
-			await client.stop();
-		}
+		});
 	}
 
 	async codeToEnglish(input: CodeToEnglishInput): Promise<CodeToEnglishOutput> {
@@ -191,6 +196,16 @@ export class CodexInterpreter {
 		};
 	}
 
+	dispose(): void {
+		if (this.disposed) {
+			return;
+		}
+		this.disposed = true;
+		const pools = [...this.pools.values()];
+		this.pools.clear();
+		void Promise.all(pools.map((pool) => pool.dispose()));
+	}
+
 	private async runStructuredTurn(input: {
 		prompt: string;
 		schema: unknown;
@@ -199,17 +214,12 @@ export class CodexInterpreter {
 		onRetry?: (message: string) => void;
 		modelPreference?: CodexModelPreference;
 	}): Promise<{ parsed: unknown } & ModelResolution> {
-		const executable = resolveCodexExecutable();
-		await assertSupportedVersion(executable);
-		const client = new AppServerClient(executable);
-
-		try {
-			await client.start();
+		return this.withClient(input.cancellationToken, async (client, pool) => {
 			await assertChatGPTAccount(client);
 			let models: CodexModel[] = [];
 			let modelEnumerationFailed = false;
 			try {
-				models = await readVisibleModels(client);
+				models = await pool.readVisibleModels(client);
 				modelEnumerationFailed = models.length === 0;
 			} catch {
 				modelEnumerationFailed = true;
@@ -256,24 +266,288 @@ export class CodexInterpreter {
 					: {}),
 				...(modelEnumerationFailed ? { modelEnumerationFailed: true } : {}),
 			};
+		});
+	}
+
+	private async withClient<T>(
+		cancellationToken: vscode.CancellationToken,
+		run: (client: AppServerClient, pool: AppServerClientPool) => Promise<T>,
+	): Promise<T> {
+		if (this.disposed) {
+			throw new Error('CodexInterpreter has been disposed.');
+		}
+		const executable = resolveCodexExecutable();
+		await assertSupportedVersion(executable);
+		if (cancellationToken.isCancellationRequested) {
+			throw new vscode.CancellationError();
+		}
+		const pool = this.poolFor(executable);
+		const client = await pool.acquire(cancellationToken);
+		try {
+			return await run(client, pool);
 		} catch (error) {
-			if (input.cancellationToken.isCancellationRequested) {
+			if (cancellationToken.isCancellationRequested) {
 				throw new vscode.CancellationError();
 			}
 			throw error;
 		} finally {
+			await pool.release(client);
+		}
+	}
+
+	private poolFor(executable: string): AppServerClientPool {
+		let pool = this.pools.get(executable);
+		if (!pool) {
+			pool = new AppServerClientPool(executable);
+			this.pools.set(executable, pool);
+		}
+		return pool;
+	}
+}
+
+interface PoolWaiter {
+	resolve: (client: AppServerClient) => void;
+	reject: (error: Error) => void;
+	cancellation: vscode.Disposable;
+}
+
+class AppServerClientPool {
+	private readonly idle: AppServerClient[] = [];
+	private readonly busy = new Set<AppServerClient>();
+	private readonly waiters: PoolWaiter[] = [];
+	private readonly idleTimers = new Map<AppServerClient, NodeJS.Timeout>();
+	private modelsCache: { models: CodexModel[]; expiresAt: number } | undefined;
+	private creating = 0;
+	private disposed = false;
+
+	constructor(private readonly executable: string) {}
+
+	async acquire(cancellationToken: vscode.CancellationToken): Promise<AppServerClient> {
+		if (this.disposed) {
+			throw new Error('CodexInterpreter has been disposed.');
+		}
+		if (cancellationToken.isCancellationRequested) {
+			throw new vscode.CancellationError();
+		}
+
+		const idle = this.takeIdleClient();
+		if (idle) {
+			this.busy.add(idle);
+			return idle;
+		}
+
+		if (this.busy.size + this.creating < MAX_WARM_CLIENTS) {
+			this.creating += 1;
+			let acquired = false;
+			try {
+				const client = new AppServerClient(this.executable);
+				await client.start();
+				if (this.disposed) {
+					await client.stop();
+					throw new Error('CodexInterpreter has been disposed.');
+				}
+				if (cancellationToken.isCancellationRequested) {
+					await client.stop();
+					throw new vscode.CancellationError();
+				}
+				this.busy.add(client);
+				acquired = true;
+				return client;
+			} finally {
+				this.creating -= 1;
+				if (!acquired) {
+					void this.dispatchWaiter();
+				}
+			}
+		}
+
+		return new Promise<AppServerClient>((resolve, reject) => {
+			const waiter: PoolWaiter = {
+				resolve: (client) => {
+					waiter.cancellation.dispose();
+					resolve(client);
+				},
+				reject: (error) => {
+					waiter.cancellation.dispose();
+					reject(error);
+				},
+				cancellation: cancellationToken.onCancellationRequested(() => {
+					const index = this.waiters.indexOf(waiter);
+					if (index >= 0) {
+						this.waiters.splice(index, 1);
+						waiter.reject(new vscode.CancellationError());
+					}
+				}),
+			};
+			this.waiters.push(waiter);
+			if (cancellationToken.isCancellationRequested) {
+				const index = this.waiters.indexOf(waiter);
+				if (index >= 0) {
+					this.waiters.splice(index, 1);
+					waiter.reject(new vscode.CancellationError());
+				}
+			}
+		});
+	}
+
+	async release(client: AppServerClient, options?: { drop?: boolean }): Promise<void> {
+		this.busy.delete(client);
+		const drop = options?.drop === true || !client.isAlive;
+		if (drop) {
+			this.clearIdleTimer(client);
 			await client.stop();
+			await this.dispatchWaiter();
+			return;
+		}
+
+		client.resetForReuse();
+		if (this.disposed) {
+			this.clearIdleTimer(client);
+			await client.stop();
+			return;
+		}
+
+		const waiter = this.waiters.shift();
+		if (waiter) {
+			this.busy.add(client);
+			waiter.resolve(client);
+			return;
+		}
+		this.idle.push(client);
+		this.scheduleIdleEviction(client);
+	}
+
+	async readVisibleModels(
+		client: AppServerClient,
+		options?: { forceRefresh?: boolean },
+	): Promise<CodexModel[]> {
+		const now = Date.now();
+		if (!options?.forceRefresh && this.modelsCache && now < this.modelsCache.expiresAt) {
+			return this.modelsCache.models;
+		}
+		try {
+			const models = await readVisibleModels(client);
+			if (models.length === 0) {
+				this.modelsCache = undefined;
+				return models;
+			}
+			this.modelsCache = { models, expiresAt: now + MODEL_LIST_CACHE_TTL_MS };
+			return models;
+		} catch (error) {
+			this.modelsCache = undefined;
+			throw error;
+		}
+	}
+
+	async dispose(): Promise<void> {
+		this.disposed = true;
+		this.modelsCache = undefined;
+		const waiters = this.waiters.splice(0, this.waiters.length);
+		for (const waiter of waiters) {
+			waiter.reject(new Error('CodexInterpreter has been disposed.'));
+		}
+		for (const timer of this.idleTimers.values()) {
+			clearTimeout(timer);
+		}
+		this.idleTimers.clear();
+		const clients = [...this.idle, ...this.busy];
+		this.idle.length = 0;
+		this.busy.clear();
+		await Promise.all(clients.map((client) => client.stop()));
+	}
+
+	private takeIdleClient(): AppServerClient | undefined {
+		while (this.idle.length > 0) {
+			const client = this.idle.pop();
+			if (!client) {
+				return undefined;
+			}
+			this.clearIdleTimer(client);
+			if (client.isAlive) {
+				return client;
+			}
+			void client.stop();
+		}
+		return undefined;
+	}
+
+	private scheduleIdleEviction(client: AppServerClient): void {
+		this.clearIdleTimer(client);
+		const timer = setTimeout(() => {
+			void this.evictIdleClient(client);
+		}, IDLE_CLIENT_TTL_MS);
+		timer.unref();
+		this.idleTimers.set(client, timer);
+	}
+
+	private clearIdleTimer(client: AppServerClient): void {
+		const timer = this.idleTimers.get(client);
+		if (!timer) {
+			return;
+		}
+		clearTimeout(timer);
+		this.idleTimers.delete(client);
+	}
+
+	private async evictIdleClient(client: AppServerClient): Promise<void> {
+		this.idleTimers.delete(client);
+		if (this.disposed) {
+			return;
+		}
+		const index = this.idle.indexOf(client);
+		if (index < 0) {
+			return;
+		}
+		this.idle.splice(index, 1);
+		await client.stop();
+	}
+
+	private async dispatchWaiter(): Promise<void> {
+		if (this.disposed || this.waiters.length === 0) {
+			return;
+		}
+		if (this.busy.size + this.creating >= MAX_WARM_CLIENTS) {
+			return;
+		}
+		const waiter = this.waiters.shift();
+		if (!waiter) {
+			return;
+		}
+		this.creating += 1;
+		let handedOff = false;
+		try {
+			const client = new AppServerClient(this.executable);
+			await client.start();
+			if (this.disposed) {
+				await client.stop();
+				waiter.reject(new Error('CodexInterpreter has been disposed.'));
+				return;
+			}
+			this.busy.add(client);
+			waiter.resolve(client);
+			handedOff = true;
+		} catch (error) {
+			waiter.reject(error instanceof Error ? error : new Error('Codex app server could not be started.'));
+		} finally {
+			this.creating -= 1;
+			if (!handedOff) {
+				await this.dispatchWaiter();
+			}
 		}
 	}
 }
 
 async function assertChatGPTAccount(client: AppServerClient): Promise<void> {
+	if (client.hasVerifiedChatGptAccount) {
+		return;
+	}
 	const account = await client.request('account/read', { refreshToken: false }) as {
 		account?: { type?: string } | null;
 	};
 	if (account.account?.type !== 'chatgpt') {
 		throw new AuthenticationRequiredError('Sign in to Codex with ChatGPT, then try again.');
 	}
+	client.markChatGptAccountVerified();
 }
 
 async function readVisibleModels(client: AppServerClient): Promise<CodexModel[]> {
@@ -422,7 +696,7 @@ function assertSupportedVersion(executable: string): Promise<void> {
 }
 
 async function checkSupportedVersion(executable: string): Promise<void> {
-	const versionOutput = await runProcess(executable, ['--version']);
+	const versionOutput = await runProcess(executable, ['--version'], VERSION_CHECK_TIMEOUT_MS);
 	const version = versionOutput.match(/\d+\.\d+\.\d+(?:-[\w.]+)?/u)?.[0];
 	if (!version) {
 		throw new Error('Codex is not installed or did not report a version.');
@@ -432,10 +706,27 @@ async function checkSupportedVersion(executable: string): Promise<void> {
 	}
 }
 
-function runProcess(executable: string, args: string[]): Promise<string> {
+function runProcess(executable: string, args: string[], timeoutMs: number): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(executable, args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
 		let output = '';
+		let settled = false;
+		const timer = setTimeout(() => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			child.kill('SIGTERM');
+			reject(new Error('Codex version check timed out.'));
+		}, timeoutMs);
+		const settle = (action: () => void): void => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			clearTimeout(timer);
+			action();
+		};
 		child.stdout.on('data', (chunk: Buffer) => {
 			output += chunk.toString();
 		});
@@ -443,18 +734,22 @@ function runProcess(executable: string, args: string[]): Promise<string> {
 			output += chunk.toString();
 		});
 		child.once('error', (error: NodeJS.ErrnoException) => {
-			if (error.code === 'ENOENT') {
-				reject(new Error('Codex is not installed. Install or update Codex, then try again.'));
-				return;
-			}
-			reject(error);
+			settle(() => {
+				if (error.code === 'ENOENT') {
+					reject(new Error('Codex is not installed. Install or update Codex, then try again.'));
+					return;
+				}
+				reject(error);
+			});
 		});
 		child.once('exit', (code) => {
-			if (code === 0) {
-				resolve(output);
-			} else {
-				reject(new Error('Codex could not be started.'));
-			}
+			settle(() => {
+				if (code === 0) {
+					resolve(output);
+				} else {
+					reject(new Error('Codex could not be started.'));
+				}
+			});
 		});
 	});
 }
@@ -515,10 +810,12 @@ class AppServerClient {
 	private isolatedRuntimeRoot: string | undefined;
 	private stopping = false;
 	private nextId = 1;
+	private chatGptAccountVerified = false;
 	private readonly pending = new Map<number, PendingRequest>();
 	private readonly notifications: RpcNotification[] = [];
 	private readonly waiters: NotificationWaiter[] = [];
 	private readonly notificationListeners = new Set<(notification: RpcNotification) => void>();
+	private writeQueue: Promise<void> = Promise.resolve();
 
 	constructor(private readonly executable: string) {}
 
@@ -527,6 +824,25 @@ class AppServerClient {
 			throw new Error('Codex app server has not started.');
 		}
 		return this.isolatedRuntimeRoot;
+	}
+
+	get isAlive(): boolean {
+		const child = this.process;
+		return Boolean(
+			child
+			&& !this.stopping
+			&& child.exitCode === null
+			&& !child.killed
+			&& !child.stdin.destroyed,
+		);
+	}
+
+	get hasVerifiedChatGptAccount(): boolean {
+		return this.chatGptAccountVerified;
+	}
+
+	markChatGptAccountVerified(): void {
+		this.chatGptAccountVerified = true;
 	}
 
 	async start(): Promise<void> {
@@ -554,7 +870,11 @@ class AppServerClient {
 				optOutNotificationMethods: [],
 			},
 		});
-		this.send({ method: 'initialized' });
+		await this.send({ method: 'initialized' });
+	}
+
+	resetForReuse(): void {
+		this.notifications.length = 0;
 	}
 
 	request(method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
@@ -565,13 +885,11 @@ class AppServerClient {
 				reject(new Error(`${method} timed out.`));
 			}, timeoutMs);
 			this.pending.set(id, { resolve, reject, timer });
-			try {
-				this.send({ method, id, params });
-			} catch (error) {
+			void this.send({ method, id, params }).catch((error) => {
 				clearTimeout(timer);
 				this.pending.delete(id);
 				reject(error instanceof Error ? error : new Error('Codex request could not be sent.'));
-			}
+			});
 		});
 	}
 
@@ -699,11 +1017,37 @@ class AppServerClient {
 		}
 	}
 
-	private send(message: unknown): void {
+	private send(message: unknown): Promise<void> {
+		this.writeQueue = this.writeQueue.then(() => this.writeMessage(message), () => this.writeMessage(message));
+		return this.writeQueue;
+	}
+
+	private async writeMessage(message: unknown): Promise<void> {
 		if (!this.process || this.process.stdin.destroyed) {
 			throw new Error('Codex app server is not running.');
 		}
-		this.process.stdin.write(`${JSON.stringify(message)}\n`);
+		const payload = `${JSON.stringify(message)}\n`;
+		const stdin = this.process.stdin;
+		const canContinue = stdin.write(payload);
+		if (canContinue) {
+			return;
+		}
+		await new Promise<void>((resolve, reject) => {
+			const onDrain = (): void => {
+				cleanup();
+				resolve();
+			};
+			const onError = (error: Error): void => {
+				cleanup();
+				reject(error);
+			};
+			const cleanup = (): void => {
+				stdin.off('drain', onDrain);
+				stdin.off('error', onError);
+			};
+			stdin.once('drain', onDrain);
+			stdin.once('error', onError);
+		});
 	}
 
 	private onLine(line: string): void {
@@ -737,10 +1081,10 @@ class AppServerClient {
 		}
 
 		if (typeof message.id === 'number' && typeof message.method === 'string') {
-			this.send({
+			void this.send({
 				id: message.id,
 				error: { code: -32601, message: `LangClarity does not permit server request: ${message.method}` },
-			});
+			}).catch(() => undefined);
 			return;
 		}
 

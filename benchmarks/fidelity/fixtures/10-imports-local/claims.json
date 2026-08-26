@@ -1,0 +1,24 @@
+{
+  "id": "10-imports-local",
+  "languageId": "typescript",
+  "sourceFile": "source.ts",
+  "mustHave": [
+    {
+      "id": "uses-add-from-math",
+      "description": "Uses add from the local math module.",
+      "patterns": ["(?i)\\badd\\b", "(?i)math|import|module"]
+    },
+    {
+      "id": "returns-sum",
+      "description": "Returns the sum of the two numbers.",
+      "patterns": ["(?i)sum|add|plus|together"]
+    }
+  ],
+  "prohibited": [
+    {
+      "id": "no-multiply",
+      "description": "Must not claim multiplication.",
+      "patterns": ["(?i)multipl(?:y|ies|ication)|\\btimes\\b"]
+    }
+  ]
+}
