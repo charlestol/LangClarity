@@ -2,9 +2,9 @@
 
 ## 1. Purpose and status
 
-This document turns the requirements in [PRD.md](./PRD.md) into an implementation-ready MVP design. [High_Level_Tech_Doc.md](./High_Level_Tech_Doc.md) is the concise architecture map; this document contains the deeper implementation reference for module responsibilities, state and data contracts, workflows, delivery phases, risks, and verification.
+This document turns the requirements in [PRD.md](./PRD.md) into the deeper implementation reference for module responsibilities, state and data contracts, workflows, delivery phases, risks, and verification. [High_Level_Tech_Doc.md](./High_Level_Tech_Doc.md) remains the concise architecture map.
 
-This is a pre-development design with the Codex integration gate completed. On 2026-08-22, installed Codex CLI `0.148.0-alpha.15` passed end-to-end stdio initialization, existing-account detection, dynamic model enumeration, schema-valid turns in both directions, cancellation, restart, missing-runtime handling, and zero-write checks in a disposable fixture. The app-server is still experimental, so generated protocol contracts and a minimum-version gate remain mandatory.
+**Status:** the VS Code extension MVP is largely implemented. Claims below describe shipped behavior unless marked as open/future work. Phase 0 (Codex protocol proof) passed on 2026-08-22 with Codex CLI `0.148.0-alpha.15` (stdio initialization, existing-account detection, dynamic model enumeration, schema-valid turns in both directions, cancellation, restart, missing-runtime handling, and zero-write checks in a disposable fixture). The app-server is still experimental, so generated protocol contracts and a minimum-version gate remain mandatory. Remaining release-owner gates are tracked in [MVP_RELEASE_CHECKLIST.md](./MVP_RELEASE_CHECKLIST.md).
 
 ## 2. Design principles
 
@@ -25,7 +25,7 @@ This is a pre-development design with the Codex integration gate completed. On 2
 - “TypeScript and JavaScript” provisionally includes `.ts`, `.tsx`, `.js`, and `.jsx`; narrowing this to `.ts` and `.js` changes eligibility and parser configuration, not the design.
 - One source file has at most one Markdown interpretation in its owning workspace folder.
 - Source `src/users.ts` maps to `.langclarity/src/users.ts.md`. Retaining the source extension prevents `.ts`/`.js` basename collisions.
-- Both source and English use native VS Code text editors. A custom webview is unnecessary for the proof of concept.
+- Source uses the native VS Code text editor. English UX is a custom text editor plus webview (`langclarity.interpretationView`). Native Markdown remains available as a secondary surface via `langclarity.openMarkdown`.
 - `.langclarity/` is ordinary workspace content. LangClarity does not silently commit or ignore it; after the first interpretation, the user may explicitly add it to `.gitignore`.
 - A full proposed source document is the simplest reliable internal contract for English → Code, even if Codex returns a patch. The proposal coordinator always materializes the exact final document before validation and preview.
 
@@ -37,7 +37,7 @@ The executable proof established:
 2. `model/list` returned six visible models with default flags and supported reasoning efforts. This is a runtime snapshot, not a catalog to hard-code.
 3. Both directions returned schema-valid data while the read-only/no-approval fixture remained byte-for-byte unchanged; cancellation and restart also passed.
 4. Missing-executable, stale-response, malformed-protocol, and malformed-result guards passed at the client boundary. An older-version rejection passed with a simulated version string.
-5. Login initiation/cancellation was not exercised because the account was already authenticated. Native Markdown lifecycle behavior remains extension implementation work, not a Codex integration blocker.
+5. Login initiation/cancellation was not exercised because the account was already authenticated. That remains open certification work, not a Codex integration blocker.
 6. Schema validity did not guarantee semantic fidelity: the first Code → English response contained an internal input-mutation contradiction.
 
 If Codex cannot be invoked through an official supported local interface with Codex-managed ChatGPT authentication, that is an MVP-blocking integration finding and requires a product decision. It must not be silently replaced with API-key auth.
@@ -47,25 +47,25 @@ If Codex cannot be invoked through an official supported local interface with Co
 ```text
 ┌──────────────────────────── VS Code Extension Host ───────────────────────────┐
 │                                                                              │
-│  Commands/status ── Native Markdown ── Session coordinator ─ Source docs     │
-│                          │                  │                  │              │
-│                   .langclarity tree         ├── State          ├── Parser     │
-│                                             ├── Mappings       ├── Validator  │
-│                                             └── Proposals      └── Diff/apply │
-│                                                   │                          │
-└───────────────────────────────────────────────────┼──────────────────────────┘
-                                                    │ local protocol
-                                                    ▼
-                                          Codex runtime/app-server
-                                                    │
-                                                    ▼
-                                    Codex-managed ChatGPT authentication
-                                                    │
-                                                    ▼
-                                               OpenAI/Codex
+│  Commands/status ── Interpretation webview ── Session coordinator ─ Source   │
+│                          │                         │                  │       │
+│                   .langclarity Markdown            ├── State          ├── Parser
+│                   (openMarkdown secondary)         ├── Facts          ├── Validator
+│                                                    └── Proposals      └── Diff/apply
+│                                                          │                   │
+└──────────────────────────────────────────────────────────┼───────────────────┘
+                                                           │ local protocol
+                                                           ▼
+                                                 Codex runtime/app-server
+                                                           │
+                                                           ▼
+                                           Codex-managed ChatGPT authentication
+                                                           │
+                                                           ▼
+                                                      OpenAI/Codex
 ```
 
-No LangClarity service is in the inference or authentication path. Interpretations remain as local Markdown in the workspace’s `.langclarity/` tree.
+No LangClarity service is in the inference or authentication path. Interpretations remain as local Markdown in the workspace’s `.langclarity/` tree; the primary English UX is the custom interpretation editor over that file.
 
 ## 5. Major components
 
@@ -82,17 +82,17 @@ Keep this layer thin. Business state belongs in the session coordinator.
 
 ### 5.2 English document view
 
-A normal VS Code Markdown editor provides the editable English surface paired with one source URI. Open it beside the source with `vscode.window.showTextDocument`.
+Primary English UX is the custom editor `langclarity.interpretationView` (CustomTextEditor + webview) registered for `**/.langclarity/**/*.md`. Open it beside the source with Open Interpretation. Native Markdown remains a secondary surface via **Open Interpretation Markdown** (`langclarity.openMarkdown`).
 
 Responsibilities:
 
-- use predictable headings and lists that preserve readable hierarchy;
-- retain native editing, undo/redo, search, accessibility, Git diff, and agent filesystem access;
-- expose synchronization through commands, editor/title actions, CodeLens, or status items;
+- present editable Behavior rows and sync actions in the webview while persisting the same `.langclarity/` Markdown document;
+- retain undo/redo through the underlying text document, plus Git/filesystem access to that Markdown;
+- expose synchronization through commands, editor/title or pane actions, and status items (no CodeLens in MVP);
 - validate required metadata/headings only when a sync is requested;
 - keep current Markdown intact when validation or interpretation fails.
 
-The Markdown file is the durable source of truth for English. There is no duplicate English buffer in extension storage and no custom structured editor in MVP.
+The Markdown file under `.langclarity/` is the durable source of truth for English. There is no duplicate English buffer in extension storage. The webview is the primary editing surface; native Markdown is not the default English UX.
 
 ### 5.3 File session coordinator
 
@@ -132,12 +132,11 @@ Responsibilities:
 - choose the script kind from the supported document;
 - parse source and report syntax errors;
 - optionally extract coarse context such as functions, classes, declarations, and source ranges;
-- resolve direct imports/exports and bounded static dependency paths with evidence;
-- optionally build bounded paths from recognized test files back to the interpreted source file;
-- distinguish verified relationships, static-path relationships, and heuristic candidates;
+- resolve direct import/export module references into local `RepositoryFacts` (`keyDefinitions`, `dependencies`, `relatedFiles`);
+- leave `relatedTests` empty in MVP (no test discovery);
 - collect relevant diagnostics after a syntactically valid proposal.
 
-AST context is advisory input and mapping metadata, not a persistent semantic model. Incomplete current code may be submitted best-effort when useful; an unparseable proposed document is not ordinarily applicable.
+AST context is advisory input and mapping metadata, not a persistent semantic model. Incomplete current code may be submitted best-effort when useful; an unparseable proposed document is not ordinarily applicable. Multi-edge dependency graphs, heuristic candidates, and connected-file English summaries are not implemented.
 
 ### 5.6 Interpreter boundary
 
@@ -145,22 +144,35 @@ MVP exposes only the operations it needs:
 
 ```ts
 interface Interpreter {
-  codeToEnglish(input: CodeToEnglishInput): Promise<EnglishDocument>;
-  englishToCode(input: EnglishToCodeInput): Promise<CodeChangeResult>;
+  codeToEnglish(input: CodeToEnglishInput): Promise<CodeToEnglishOutput>;
+  englishToCode(input: EnglishToCodeInput): Promise<EnglishToCodeOutput>;
+}
+
+interface CodeToEnglishOutput extends ModelResolution {
+  document: InterpretationResult; // purpose, responsibilities, behavior, sideEffects, constraints
+}
+
+interface EnglishToCodeOutput extends CodeChangeResult, ModelResolution {}
+
+interface CodeChangeResult {
+  proposedSource: string;
+  summary: string; // required
 }
 ```
 
-`CodexInterpreter` is the only implementation. The interface isolates process/protocol details for testing and future replacement. MVP includes model selection only from models enumerated by the authenticated Codex runtime; it does not include provider selection or a generic capability system.
+`CodexInterpreter` is the only production implementation. The interface isolates process/protocol details for testing and future replacement. MVP includes model selection only from models enumerated by the authenticated Codex runtime; it does not include provider selection or a generic capability system.
+
+`codeToEnglish` returns model fields only (`InterpretationResult` via `document`). Locally derived `RepositoryFacts` are computed separately and merged when rendering Markdown; they are not part of the interpreter return value.
 
 Responsibilities:
 
 - connect to or start the supported Codex runtime;
-- report runtime and Codex-managed auth state;
+- report runtime and Codex-managed auth failures through error classes (`AuthenticationRequiredError`, `UsageLimitedError`, `CodexResponseError`) rather than a documented `CodexStatus` union;
 - enumerate non-hidden models and their supported reasoning efforts;
-- construct bounded prompts containing source, structured English, mappings, and direction-specific instructions;
+- construct bounded prompts containing source, structured English, and direction-specific instructions;
 - request schema-conforming responses;
 - validate response shape and pass Codex error messages through without parsing or reclassification;
-- support cancellation when exposed by the runtime and enforce LangClarity's own operation timeout.
+- support cancellation when exposed by the runtime and enforce LangClarity's own turn timeout (180s).
 
 Codex output is untrusted data. It is schema-checked and staged before use.
 
@@ -182,10 +194,10 @@ Responsibilities:
 Responsibilities:
 
 - convert a Codex response into an exact full proposed source document;
-- ensure the proposal is based on the current source hash;
-- run syntax validation and collect diagnostics;
+- ensure the proposal is based on the current source and English document hashes;
+- run syntax validation and collect proposal diagnostics;
 - expose the proposal through VS Code’s diff UI using an in-memory/virtual document;
-- apply only after explicit approval and a final base-hash check;
+- after the user chooses Apply / Apply Anyway, wait for a second Code → English refresh of the proposed source, then apply proposed source and refreshed Markdown together in one `WorkspaceEdit` (`proposalCoordinator.ts`);
 - dispose temporary proposal state on apply, cancellation, error, or source divergence.
 
 ### 5.9 Logging
@@ -223,34 +235,32 @@ LangClarity must not:
 - request an OpenAI API key;
 - substitute hosted LangClarity inference.
 
-### 6.2 Runtime states
+### 6.2 Runtime states and operation failures
 
-Keep known account/runtime availability separate from operation failures:
+There is no implemented `CodexStatus` union driving the UI. Account/runtime problems surface as thrown errors while model work uses `vscode.window.withProgress` (cancellable notifications) plus status-bar sync state from the session coordinator.
 
 ```ts
-type CodexStatus =
-  | { kind: "unavailable"; setupMessage: string }
-  | { kind: "starting" }
-  | { kind: "authentication-required" }
-  | { kind: "authenticating" }
-  | { kind: "usage-limited"; message?: string }
-  | { kind: "ready" };
+// Session document sync (sessionCoordinator.ts)
+type StableSyncState =
+  | "SYNCED"
+  | "CODE_CHANGED"
+  | "ENGLISH_CHANGED"
+  | "BOTH_CHANGED";
 
-type LangClarityError =
-  | { source: "codex"; message: string; willRetry?: boolean }
-  | { source: "langclarity"; message: string };
+type SessionState = StableSyncState | "ERROR";
+// No INTERPRETING overlay — in-flight work is shown via withProgress / pendingSources.
 
-type OperationResult =
-  | { status: "completed" }
-  | { status: "cancelled" }
-  | { status: "authentication-required" }
-  | { status: "usage-limited"; message?: string }
-  | { status: "failed"; error: LangClarityError };
+// Codex / account failures (codexInterpreter.ts)
+class CodexResponseError extends Error {
+  willRetry?: boolean;
+}
+class AuthenticationRequiredError extends CodexResponseError {}
+class UsageLimitedError extends CodexResponseError {}
 ```
 
-For any failure returned by Codex, use its returned message verbatim for the user-facing `codex` error. Do not branch on, regex-match, translate, or maintain product copy for Codex message text. If Codex supplies no usable message, use a generic unknown-Codex-error fallback. Structured Codex details may be retained for redacted diagnostics, but MVP product behavior does not depend on them. `willRetry`, when supplied by Codex, controls only whether the UI says Codex is retrying.
+For any failure returned by Codex, use its returned message verbatim for the user-facing `codex` error category. Do not branch on, regex-match, translate, or maintain product copy for Codex message text. If Codex supplies no usable message, use a generic unknown-Codex-error fallback. Structured Codex details may be retained for redacted diagnostics, but MVP product behavior does not depend on them. `willRetry`, when supplied by Codex, controls only whether the progress UI reports that Codex is retrying.
 
-LangClarity-originated errors cover conditions the extension detects itself, including missing/incompatible runtime, process startup or exit, local timeout, invalid protocol data, workspace access, and source access. These conditions share the same `langclarity` error shape rather than separate public error types. Cancellation is not an error; authentication required and usage limited are explicit account states.
+LangClarity-originated errors cover conditions the extension detects itself, including missing/incompatible runtime, process startup or exit, local timeout, invalid protocol data, workspace access, and source access. Cancellation is not an error; authentication required and usage limited are explicit subclasses of `CodexResponseError`.
 
 The extension should start/connect only after a LangClarity action requires Codex. Ordinary file opening must not cause login, process startup, or inference.
 
@@ -285,6 +295,8 @@ Example:
 schemaVersion: 1
 source: src/users.ts
 sourceHash: sha256:...
+editableEnglishHash: sha256:...
+mappingRevisionHash: sha256:...
 languageId: typescript
 promptVersion: 6
 model: codex-default
@@ -319,59 +331,39 @@ Select the highest-scoring active US users.
 ## Constraints
 ```
 
-Frontmatter keys and section headings are versioned. Empty sections are permitted when the source provides no supported facts. The document remains useful as ordinary Markdown even when the extension is absent.
+Frontmatter always includes `editableEnglishHash`; `mappingRevisionHash` is written when local repository facts are rendered. Section headings are versioned. Empty sections are permitted when the source provides no supported facts. The document remains useful as ordinary Markdown even when the extension is absent.
 
 ### 7.2 Structured contract
 
-LangClarity composes the document from a validated model response and locally derived facts, then renders it into Markdown. The model response supplies purpose, responsibilities, behavior, side effects, and constraints; source identity, key definitions, imports/exports, relationships, and optional test evidence come from local analysis. The parsed form of the complete Markdown document uses this conceptual contract:
+LangClarity composes the document from a validated model response and locally derived facts, then renders it into Markdown. The model response (`InterpretationResult`) supplies purpose, responsibilities, behavior, side effects, and constraints. Source identity, key definitions, dependencies, related files, and related tests come from local analysis (`RepositoryFacts`) and frontmatter — not from the interpreter return value.
 
 ```ts
-interface EnglishDocument {
-  schemaVersion: 1;
-  source: {
-    path: string;
-    languageId: string;
-    hash: string;
-  };
+interface InterpretationResult {
   purpose: string;
   responsibilities: string[];
-  behavior: EnglishBlock[];
-  keyDefinitions: KeyDefinitionSummary[];
-  relationships: VerifiedRelationship[];
+  behavior: EnglishCodeLine[];
   sideEffects: string[];
   constraints: string[];
 }
 
-interface EnglishBlock {
+interface EnglishCodeLine {
   sourceLine: number;
   statement: string;
 }
 
-interface KeyDefinitionSummary {
-  name: string;
-  kind: string;
-  responsibility: string;
+interface RepositoryFacts {
+  keyDefinitions: string[];
+  dependencies: string[];
+  relatedFiles: string[]; // direct imports only in MVP
+  relatedTests: string[];  // always [] in MVP
 }
 
-interface VerifiedRelationship {
-  path: string;
-  kind: "import" | "export" | "type" | "test" | "candidate";
-  evidence: string;
-}
-```
-
-Relationships and related tests are derived locally rather than accepted as unconstrained model claims:
-
-```ts
-interface RelatedTestMapping {
-  testUri: string;
-  testKind: "unit" | "integration" | "e2e" | "unknown";
-  evidence:
-    | { kind: "direct-import"; importedDefinitions?: string[] }
-    | { kind: "static-dependency-path"; path: string[] }
-    | { kind: "naming-or-location-convention"; convention: string };
+interface CodeToEnglishOutput extends ModelResolution {
+  document: InterpretationResult;
 }
 ```
+
+The rendered Markdown document is the persisted form; there is no separate persisted `EnglishDocument` object graph with `VerifiedRelationship` kinds.
 
 Validation rules:
 
@@ -379,13 +371,11 @@ Validation rules:
 - item N has `sourceLine: N`, with no gaps, duplicates, combinations, or reordering;
 - statements are bounded single-line text, and blank source lines use empty statements;
 - each nonblank statement explains only its paired source line in everyday language and preserves visible literal values verbatim;
-- line correspondence improves inspectability but never proves correctness or authorizes edits by itself;
-- related-test URIs resolve inside the workspace and static paths terminate at the interpreted source file;
-- convention-based test candidates remain visibly distinct from import/path-supported mappings.
+- line correspondence improves inspectability but never proves correctness or authorizes edits by itself.
 
 Line identity is positional and recalculated when synchronization succeeds. MVP does not require stable AST-node identity across edits or regenerations.
 
-Locally generated sections, such as verified relationship/test evidence, use explicit HTML comment boundaries. They are excluded from the editable-English hash so deterministic refreshes do not incorrectly produce `ENGLISH_CHANGED`:
+Locally generated sections use explicit HTML comment boundaries. They are excluded from the editable-English hash so deterministic refreshes do not incorrectly produce `ENGLISH_CHANGED`:
 
 ```md
 <!-- langclarity:generated:start relationships -->
@@ -395,30 +385,19 @@ Locally generated sections, such as verified relationship/test evidence, use exp
 
 ### 7.3 Connected-file discovery
 
-Connected-file context is bounded and evidence-based:
+MVP connected-file context is intentionally small (`repositoryFacts.ts`):
 
-1. Derive direct imports, exports, and resolvable module references locally with the TypeScript compiler API.
-2. Label direct relationships as verified and retain their resolution evidence.
-3. Follow static paths only when a user explicitly requests connected context, with a maximum of four edges.
-4. Include a connected file’s English summary only when its paired `.langclarity/` Markdown already exists. Do not automatically interpret the repository.
-5. Label naming/location heuristics as candidates rather than facts.
-6. Recompute this local mapping after relevant source or resolver-configuration changes without invoking Codex.
+1. Parse the source with the TypeScript compiler API and collect direct import/export module specifiers.
+2. Resolve those specifiers with compiler options from the nearest `tsconfig`/`jsconfig` when available.
+3. Workspace-relative resolved paths (excluding `node_modules`) become `dependencies` evidence strings and `relatedFiles` entries labeled as directly imported.
+4. Do **not** traverse multi-edge paths, label heuristic candidates, or attach connected files’ English summaries.
+5. Recompute these local facts on interpretation/render; this does not invoke Codex.
 
-This is a small navigation/context map, not a repository-wide semantic graph or an AI-generated index.
+This is a direct-import map for the Related files section, not a repository-wide semantic graph.
 
 ### 7.4 Related-test discovery
 
-Related-test discovery is optional enrichment and not a core MVP gate. When included, maintain a lightweight inventory using `vscode.workspace.findFiles`, TypeScript module resolution, common conventions, and readable workspace test configuration. Exclude `.langclarity`, `node_modules`, `dist`, `out`, and generated/vendor directories.
-
-For each interpreted source file:
-
-1. Mark tests that directly import the file or one of its exported definitions as direct mappings.
-2. Traverse static import paths from a test toward the source file, capped at four edges. Resolve `tsconfig`/`jsconfig` path aliases where the TypeScript resolver can do so.
-3. Add co-located or convention-matched files such as `*.test.*`, `*.spec.*`, `__tests__`, `test`, and `tests` entries as candidates when no stronger evidence exists.
-4. Recognize common Playwright/Cypress configuration and E2E directories. Because E2E tests often exercise routes without importing implementation modules, label them as candidates unless a static path exists.
-5. Recompute mappings locally when relevant workspace files change. This must not invoke Codex.
-
-Test mappings are documentation/navigation hints, not regression detection, coverage proof, or impact guarantees. They do not synthesize commands or automatically execute tests.
+Related-test discovery is **not shipped**. `RepositoryFacts.relatedTests` is always `[]`, and the Related tests Markdown section renders as none verified. Optional inventory via `findFiles`, convention matching, Playwright/Cypress config, or static paths from tests remains deferred future work — not part of the implemented MVP.
 
 ### 7.5 Model instructions
 
@@ -442,7 +421,7 @@ Code → English requests should instruct Codex to:
 - use an empty statement for each blank source line;
 - return only the required structured result.
 
-LangClarity derives source path/hash, key definitions, imports/exports, resolvable relationships, and optional related-test evidence locally. These deterministic facts may be supplied as context or rendered into generated Markdown sections, but they are not delegated to unconstrained model output.
+LangClarity derives source path/hash, key definitions, dependencies, and direct related files locally. These deterministic facts may be supplied as context or rendered into generated Markdown sections, but they are not delegated to unconstrained model output. Related tests are not discovered in MVP.
 
 The POC uses one interpretation call. Do not add a second critic/review call until repeated corpus measurements show that it materially improves semantic fidelity enough to justify the additional latency and usage.
 
@@ -485,15 +464,16 @@ interface FileSession {
   sourceDocumentVersion?: number;
   currentSourceHash: string;
   englishUri: string;
-  currentEnglish: EnglishDocument;
   currentEnglishHash: string;
   baselineSourceHash: string;
   baselineEnglishHash: string;
-  state: SyncState;
+  state: SessionState;
   pending?: PendingOperation;
   error?: SessionError;
 }
 ```
+
+Implemented session state is `StableSyncState | "ERROR"` (`sessionCoordinator.ts`). In-flight model work is tracked with `pendingSources` and shown via `withProgress`, not an `INTERPRETING` session state.
 
 ### 8.3 Synchronization state
 
@@ -504,10 +484,10 @@ type StableSyncState =
   | "ENGLISH_CHANGED"
   | "BOTH_CHANGED";
 
-type SyncState = StableSyncState | "INTERPRETING" | "ERROR";
+type SessionState = StableSyncState | "ERROR";
 ```
 
-`INTERPRETING` and `ERROR` are presentation/operation overlays. The session retains its last stable state so cancellation or failure can return to it without pretending the documents are synchronized.
+There is no `INTERPRETING` value. Operation progress overlays the derived stable state through VS Code progress notifications; `ERROR` covers invalid/unreadable paired Markdown. Cancellation or failure leaves the last derived stable state (or `ERROR` if the Markdown remains unusable).
 
 ### 8.4 Pending operation
 
@@ -528,7 +508,7 @@ Every asynchronous response is accepted only when its operation ID and both base
 ```ts
 interface CodeChangeResult {
   proposedSource: string;
-  summary?: string;
+  summary: string; // required by schema and validateCodeChangeResult
 }
 
 interface ProposedCodeChange {
@@ -579,11 +559,11 @@ This deterministic derivation is preferred to manually mutating a complex state 
 | Open cache, source hash differs | Stored record exists | `CODE_CHANGED` |
 | User edits English | Any stable state | Re-derive; usually `ENGLISH_CHANGED` or `BOTH_CHANGED` |
 | Source changes | Any stable state | Re-derive; usually `CODE_CHANGED` or `BOTH_CHANGED` |
-| Start directional sync | No pending operation; conflict choice resolved | `INTERPRETING` over prior stable state |
-| Operation fails/cancels | Pending operation matches | Return to prior stable state and show error/cancel outcome |
+| Start directional sync | No pending operation for that source; conflict choice resolved | Progress notification; stable state unchanged until success/failure |
+| Operation fails/cancels | Pending operation matches | Keep prior stable state (or `ERROR` if Markdown unusable) and show error/cancel outcome |
 | Code → English succeeds | Base source still current | Replace English and both baselines; `SYNCED` |
 | English → Code proposal succeeds | Both bases still current | Remain pending review; stable state unchanged |
-| Proposal applied | Base source still current | Apply source, update both baselines; `SYNCED` |
+| Proposal applied | Bases still current; proposed-source Code → English refresh succeeds | Apply proposed source + refreshed Markdown in one `WorkspaceEdit`; `SYNCED` |
 | Proposal cancelled | Proposal exists | Discard proposal; return to prior stable state |
 
 ### 9.3 Both-changed authority
@@ -600,11 +580,12 @@ This deterministic derivation is preferred to manually mutating a complex state 
 
 1. Resolve the active source document and verify support.
 2. Resolve its owning workspace folder and paired `.langclarity/` Markdown URI.
-3. Create or focus its session and open the Markdown document beside the source if it exists.
+3. Create or focus its session and open the custom interpretation editor (`langclarity.interpretationView`) beside the source if Markdown exists.
 4. Read exact current source and compute its hash.
 5. If no Markdown exists, offer **Interpret File**. Do not create a placeholder or contact Codex merely from opening source.
 6. If Markdown exists, parse its metadata/body and derive state.
-7. If the source hash differs, keep the Markdown visible as stale and expose Code → English.
+7. If the source hash differs, keep the interpretation visible as stale and expose Code → English.
+8. Optionally open the underlying Markdown with `langclarity.openMarkdown` for native editing/review.
 
 ### 10.2 Initial Code → English
 
@@ -633,34 +614,35 @@ The refresh flow matches initial interpretation, with two additions:
 1. User requests English → Code. If code also changed, require the authority warning.
 2. Capture current source, English, hashes, and operation ID.
 3. Ensure Codex is ready.
-4. Send current source and structured English, requesting a minimal code change and a structured result.
+4. Send current source and structured English, requesting a minimal code change and a structured result (`proposedSource` + required `summary`).
 5. Convert the result to one exact proposed source document.
 6. Reject an empty, malformed, over-limit, or wrong-language result.
 7. Reject the result if either captured base changed while awaiting Codex.
-8. Parse the proposal. Syntax errors block normal apply and are displayed.
-9. Collect TypeScript/JavaScript diagnostics. New or relevant type errors warn but do not necessarily block apply.
+8. Parse the proposal. Syntax errors block apply and are displayed; the proposal is discarded after the error message.
+9. Collect proposal diagnostics from VS Code on the virtual proposal document (errors and warnings).
 10. Register a read-only virtual document and show the VS Code diff against current source.
-11. Offer **Apply**, **Apply Anyway** only when policy permits, or **Cancel**.
+11. If diagnostics are present, offer only **Apply Anyway** / **Cancel**. If none, offer **Apply** / **Cancel**. There is no plain **Apply** when diagnostics are present.
+12. On apply choice, wait for the in-flight Code → English refresh of the proposed source (see §10.5).
 
-The diff must show exactly the content that would be applied. Do not generate a new response after preview without opening a new proposal.
+The diff must show exactly the content that would be applied to source. Do not generate a new English → Code response after preview without opening a new proposal.
 
 ### 10.5 Apply proposal
 
-1. Re-read current source and compare its hash with `baseSourceHash`.
-2. If it differs, reject the apply and ask the user to regenerate; never patch onto an unknown base.
-3. Compute minimal text edits against the exact current VS Code buffer and apply them as one `WorkspaceEdit`. Do not write the source through raw filesystem APIs and do not auto-save it.
-4. Mark the edit with a short-lived operation token or expected resulting hash so its change event is recognized.
-5. Verify the document’s resulting exact hash. Preserve its EOL style, BOM/encoding behavior, and unrelated final-newline state; do not invoke formatting.
-6. Persist the current English as its baseline and the resulting source hash as the source baseline.
-7. Clear proposal/pending/error state and publish `SYNCED`.
+1. Re-check current source and English document hashes against the proposal bases.
+2. If either differs, reject the apply and ask the user to regenerate; never patch onto an unknown base.
+3. Await the second Code → English refresh started for the proposed source (`refreshEnglish` in `proposalCoordinator.ts`), shown as a cancellable progress notification. Validate that the refreshed Markdown frontmatter matches the proposed source hash and expected source path/language.
+4. Re-check bases again after the refresh completes.
+5. Build one `WorkspaceEdit` that replaces the source change and the full English Markdown with the refreshed interpretation, then `applyEdit`. Do not write through raw filesystem APIs and do not auto-save.
+6. Verify the source document’s resulting exact hash matches the proposed source hash. Preserve EOL style, BOM/encoding behavior, and unrelated final-newline state; do not invoke formatting.
+7. Reload the session and require `SYNCED`. Clear proposal/pending state.
 
-If application or verification fails, do not update the synchronized baselines. The approved application is one undoable editor operation, and the user remains responsible for saving the source document.
+If application, refresh, or verification fails, do not treat the pair as newly synchronized. The approved application is one undoable editor operation covering source and English, and the user remains responsible for saving both documents.
 
 ## 11. Diff generation and validation
 
 ### 11.1 Proposal form
 
-Ask Codex for a structured full-source result or structured patch, depending on what Phase 0 proves most reliable. Internally always materialize a full proposed document. This simplifies:
+Ask Codex for a structured full-source result (`proposedSource` + required `summary`). Internally always materialize a full proposed document. This simplifies:
 
 - syntax parsing;
 - diff preview;
@@ -672,17 +654,18 @@ Ask Codex for a structured full-source result or structured patch, depending on 
 
 Use the TypeScript compiler API with the correct script kind. A proposed `.ts`/`.tsx` file with parse diagnostics is invalid. For JavaScript, parse diagnostics are treated equivalently.
 
-Syntax-invalid proposals may be viewed for troubleshooting but do not get ordinary **Apply**. A future escape hatch is not part of MVP unless user testing proves necessary.
+Syntax-invalid proposals may be viewed for troubleshooting but do not get **Apply** or **Apply Anyway**; after the error message the proposal is discarded.
 
 ### 11.3 Type/language diagnostics
 
-After syntax succeeds, compare or at least report diagnostics from VS Code/TypeScript. Because projects may already contain errors and model output is not guaranteed type-correct:
+After syntax succeeds, collect diagnostics from VS Code on the proposal document (`getDiagnostics`, errors and warnings). Because projects may already contain errors and model output is not guaranteed type-correct:
 
-- diagnostic warnings do not hard-block MVP apply;
-- the UI clearly states the relevant count and affected lines;
-- **Apply Anyway** requires an explicit action.
+- diagnostic warnings do not hard-block MVP apply, but they change the action set;
+- the UI states the relevant count and affected lines;
+- with diagnostics present, the only choices are **Apply Anyway** and **Cancel** (no plain **Apply**);
+- without diagnostics, choices are **Apply** and **Cancel**.
 
-Prefer showing newly introduced diagnostics when the language-service API makes comparison reliable. Falling back to proposal diagnostics is acceptable and should be labeled accurately.
+MVP uses proposal diagnostics only; newly-introduced-vs-baseline comparison is not implemented.
 
 ## 12. File-change detection and loop prevention
 
@@ -696,8 +679,8 @@ Rules:
 - Matching document-change events are still observed, but the expected result is finalized as the same apply rather than starting another sync.
 - Unexpected content or an interleaved user edit invalidates the proposal and re-derives state.
 - No source-change event automatically starts Codex.
-- Generated relationship/test section updates carry an extension-origin token and do not create `ENGLISH_CHANGED` because those sections are excluded from the editable hash.
-- Relevant source, test, import, `tsconfig`, `jsconfig`, Playwright, or Cypress changes may recompute local mapping evidence without an AI call.
+- Generated relationship section updates carry an extension-origin token and do not create `ENGLISH_CHANGED` because those sections are excluded from the editable hash.
+- Direct-import `RepositoryFacts` are recomputed when interpretations are rendered; there is no separate watcher-driven related-test inventory.
 
 For Git checkout or disk changes while an unsaved document exists, follow VS Code’s document model; do not bypass its conflict handling by reading and writing the disk directly.
 
@@ -716,7 +699,7 @@ For Git checkout or disk changes while an unsaved document exists, follow VS Cod
 
 ### 13.1 Storage behavior
 
-- Native VS Code document handling preserves unsaved English edits and performs normal saves; LangClarity does not maintain another autosave mechanism.
+- Native VS Code document handling preserves unsaved English Markdown edits and performs normal saves; the interpretation webview writes through that same document. LangClarity does not maintain another autosave mechanism.
 - Code → English writes a complete validated Markdown result only after the response and base source remain current.
 - On activation, do not eagerly parse or hash the entire workspace. Load a paired file only when its source or English document is used.
 - Never silently alter `.gitignore`. After the first interpretation, offer an explicit action to add `/.langclarity/`; the user or team decides whether `.langclarity/` is committed.
@@ -742,14 +725,15 @@ At all times:
 
 ## 14. Large, generated, and incomplete files
 
-Start with these model-operation guardrails and adjust them only from Phase 0 evidence:
+Shipped MVP guardrails:
 
 - source size: at most 75 KiB and 2,000 lines, whichever is reached first;
-- static dependency path: at most four edges;
-- concurrency: one request per file and two requests globally;
-- progress: immediate, with a slow-operation notice after 30 seconds;
-- hard request timeout: three minutes, with cancellation available when supported;
-- maximum structured response: 2 MiB;
+- English Markdown size: at most 256 KiB;
+- connected files: direct imports only (no multi-edge path cap in use);
+- concurrency: one request per file and at most two requests globally (`operationPolicy.ts`);
+- progress: cancellable `withProgress` notifications immediately; no 30-second slow-operation notice;
+- hard turn timeout: 180 seconds, with cancellation available when supported;
+- maximum protocol/response line: 2 MiB;
 - one complete proposed source document, diffed locally.
 
 Do not expose settings for these values initially. A clear unsupported message is enough for the proof of concept.
@@ -775,7 +759,7 @@ Incomplete or invalid current source may be interpreted best-effort. If Codex or
 MVP performance priorities:
 
 - opening a normal source file adds no model latency;
-- opening cached English requires only a Markdown read/parse and one source hash;
+- opening cached English requires only a Markdown read/parse (and custom editor load) plus one source hash;
 - local English editing remains responsive and performs no AI work;
 - hashing and parsing occur off the immediate UI path when files are non-trivial;
 - only the active file’s necessary content is sent to Codex;
@@ -818,9 +802,9 @@ Cover deterministic logic heavily:
 - structured response validation, exact line-count parity, consecutive line numbers, and persisted blank rows;
 - supported-file and size-limit checks;
 - parser/validation behavior for TS, JS, TSX, JSX, and incomplete fixtures;
-- optionally, related-test classification, bounded dependency traversal, evidence paths, and convention fallback;
+- optionally, related-test classification remains deferred (MVP always returns `relatedTests: []`);
 - frontmatter/body serialization, corruption handling, and migrations;
-- model error normalization;
+- model error normalization (`CodexResponseError` subclasses);
 - both-changed authority rules.
 
 ### 18.2 Component tests
@@ -836,23 +820,23 @@ Use a fake `Interpreter` and temporary fixture workspace to test:
 - cancellation and retry;
 - external source changes;
 - extension-originated edit loop prevention;
-- optionally, related-test recomputation without an AI request or English-state transition.
+- optionally, assert that related-test recomputation is absent / `relatedTests` stays empty without an AI request or English-state transition.
 
 ### 18.3 VS Code integration tests
 
 Run the extension test host against fixture workspaces to verify:
 
 - commands and editor actions;
-- pairing the correct source and Markdown-backed interpretation pane;
+- pairing the correct source and Markdown-backed custom interpretation pane;
 - document change events and workspace edits;
 - virtual proposal documents and diff commands;
 - persistence across extension-host restart;
-- diagnostics display and apply behavior;
+- proposal diagnostics and Apply / Apply Anyway / Cancel behavior;
 - no model call merely from opening a file;
 - Markdown validation and state restore;
 - rename/move/delete lifecycle, multi-root ownership, case-only rename, and orphan recovery;
 - LF/CRLF, BOM, final newline, unsaved source buffers, and one-operation undo behavior;
-- if optional test mapping ships, related tests and evidence appear for direct, static-path, and convention fixtures without becoming a release gate.
+- related-test mapping is omitted from MVP and is not an integration-test gate.
 
 ### 18.4 Codex contract tests
 
@@ -860,11 +844,11 @@ Keep live Codex tests separate from deterministic CI where authentication or mod
 
 - recorded sanitized protocol fixtures for routine tests;
 - a manual/secure smoke test for runtime startup, authentication, structured Code → English, and English → Code;
-- a small prompt-evaluation corpus covering functions, classes, async control flow, React syntax if supported, and incomplete code;
+- a shipped 12-fixture interpretation-fidelity corpus under `benchmarks/fidelity/` with `npm run benchmark:fidelity` and `npm run corpus:fidelity`;
 - qualitative checks for hierarchy, important identifier preservation, contradictions, unsupported claims, evidence support, and unnecessary source rewrite size;
 - repeated comparisons of supported reasoning efforts and prompt/schema variants while holding the model and fixture constant.
 
-The initial one-file retest found that `medium` reasoning removed the contradiction observed at `low`. A later six-fixture, 12-call medium-effort corpus found both baseline and evidence-linked variants covered all 27 expert-authored facts with no detected prohibited claims or contradictions. The evidence-linked variant added 25 structurally valid ranges and averaged 37% more latency, improving traceability rather than measured factual coverage. Expand to 10–20 representative files with repeated, randomized or rotated runs, retained raw outputs, expert-authored must-have/prohibited claims, and blinded semantic evidence review before setting thresholds or adding a second critic call.
+The initial one-file retest found that `medium` reasoning removed the contradiction observed at `low`. Earlier exploratory corpus notes remain historical. The shipped fidelity suite is the 12-fixture corpus above; expand with repeated, randomized or rotated runs, retained raw outputs, expert-authored must-have/prohibited claims, and blinded semantic evidence review before setting thresholds or adding a second critic call.
 
 ### 18.5 End-to-end acceptance
 
@@ -872,7 +856,7 @@ Automate where stable and manually certify the complete scenario in PRD section 
 
 ## 19. Implementation plan
 
-Each phase should end in demonstrable behavior and passing checks. Later phases depend on the earlier contracts but should not add speculative framework work.
+Phases 0–5 are implemented in the current extension. Phase 6 release-candidate polish and release-owner certification remain partially open. Later notes mark unfinished items explicitly.
 
 ### Phase 0 — Codex protocol proof before extension development — complete
 
@@ -889,7 +873,7 @@ Completed evidence:
 - current-version acceptance and simulated older-version rejection passed against the provisional minimum;
 - measured live-turn latencies and payload sizes remained below the starting section 14 limits.
 
-Remaining non-blocking certification work: exercise login initiation/cancellation with a signed-out account, test rejection with an actual older binary, and inject malformed data through a live stream rather than only at the client boundary.
+**Open (non-blocking certification):** exercise login initiation/cancellation with a signed-out account, test rejection with an actual older binary, and inject malformed data through a live stream rather than only at the client boundary.
 
 Acceptance criteria:
 
@@ -900,132 +884,94 @@ Acceptance criteria:
 - cancellation, restart, malformed responses, and missing/incompatible runtime states have explicit outcomes;
 - the minimum supported Codex version and initial limits are recorded.
 
-The extension scaffold may begin. Preserve the gate as a reproducible contract suite because the app-server is experimental; regenerate protocol definitions and re-run it when the minimum Codex version changes. If a future version cannot provide a sufficiently stable supported route, stop and make a product decision rather than substituting an API key.
+Preserve the gate as a reproducible contract suite because the app-server is experimental; regenerate protocol definitions and re-run it when the minimum Codex version changes. If a future version cannot provide a sufficiently stable supported route, stop and make a product decision rather than substituting an API key.
 
-### Phase 1 — Extension scaffold and initial interpretation
+### Phase 1 — Extension scaffold and initial interpretation — complete
 
 **Purpose:** deliver the first useful Code → English experience.
 
-Major tasks:
+Delivered:
 
-- generate the official TypeScript VS Code extension scaffold in a temporary directory and merge it without overwriting `docs/`;
-- choose **New Extension (TypeScript)**, npm, and the generator’s unbundled default; keep its test/lint setup and add no UI framework. Consider esbuild only when packaging evidence justifies it;
-- register Open Interpretation and Interpret File commands plus the supported-source context submenu;
-- implement supported-file gating and empty/missing-Codex/sign-in/loading/error states;
-- implement `.langclarity/` path mapping, Markdown schema, validation, rendering, and side-by-side interpretation-pane opening;
-- implement the Codex interpreter request for initial interpretation;
-- add redacted output-channel logging.
+- TypeScript VS Code extension scaffold with compile/test/lint;
+- Open Interpretation, Interpret File, and supported-source context submenu;
+- supported-file gating and empty/missing-Codex/sign-in/loading/error presentation;
+- `.langclarity/` path mapping, Markdown schema, validation, rendering, and side-by-side custom interpretation view;
+- Codex interpreter request for initial interpretation;
+- redacted output-channel logging.
 
-Dependencies: Phase 0 runtime and structured-output choices.
+Acceptance criteria met for representative fixtures: opening source alone performs no model call; explicit interpretation returns structured English; failed or malformed responses leave source and existing Markdown intact.
 
-Acceptance criteria:
-
-- opening source alone performs no model call;
-- an explicit request returns useful structured English for representative fixtures;
-- failed or malformed responses leave source and existing Markdown intact.
-
-### Phase 2 — Markdown lifecycle and staleness
+### Phase 2 — Markdown lifecycle and staleness — complete
 
 **Purpose:** make English persistent and source divergence visible.
 
-Major tasks:
+Delivered:
 
-- implement frontmatter/body schema, atomic writes, and migrations;
-- implement source/English canonical hashes;
-- implement paired rename/move/delete/orphan behavior;
+- frontmatter/body schema including `editableEnglishHash` / `mappingRevisionHash`, atomic writes, and migrations;
+- source/English canonical hashes;
+- paired rename/move/delete/orphan behavior;
 - load on demand across restarts;
-- observe source changes and derive stable sync states.
+- observe source/English changes and derive stable sync states.
 
-Dependencies: stable English schema from Phase 1.
+Acceptance criteria: saved interpretations survive restart; identical source opens `SYNCED`; edited/external source opens `CODE_CHANGED` without a model call; malformed documents fail per file without activation failure.
 
-Acceptance criteria:
-
-- saved interpretations and English edits survive restart as ordinary Markdown;
-- identical source opens `SYNCED`;
-- edited/external source opens `CODE_CHANGED` without a model call;
-- malformed documents fail per file without activation failure.
-
-### Phase 3 — English → Code proposal
+### Phase 3 — English → Code proposal — complete
 
 **Purpose:** safely turn English edits into reviewable source changes.
 
-Major tasks:
+Delivered:
 
-- build the English → Code request and result validation;
-- materialize full proposed documents;
-- parse syntax and collect diagnostics;
-- create virtual proposal documents and open VS Code diffs;
-- implement Apply/Apply Anyway/Cancel with base-hash checks;
-- verify apply results and prevent update loops.
+- English → Code request and result validation (`summary` required);
+- full proposed documents, syntax parse, and proposal diagnostics;
+- virtual proposal documents and VS Code diffs;
+- Apply / Apply Anyway / Cancel with base-hash checks;
+- apply waits for proposed-source Code → English refresh, then writes source + refreshed Markdown in one `WorkspaceEdit`.
 
-Dependencies: persistence baselines and file-session coordinator.
+Acceptance criteria: source is never written before approval; invalid syntax is blocked; diagnostics force Apply Anyway / Cancel; stale proposals cannot apply; success returns `SYNCED`.
 
-Acceptance criteria:
-
-- a small English edit commonly produces a focused diff;
-- source is never written before approval;
-- invalid syntax is blocked and diagnostics warn accurately;
-- stale proposals cannot apply;
-- success updates baselines and returns `SYNCED`.
-
-### Phase 4 — Code → English refresh
+### Phase 4 — Code → English refresh — complete
 
 **Purpose:** complete bidirectional use after ordinary source editing.
 
-Major tasks:
+Delivered:
 
 - refresh existing English from current code;
 - preserve current English until a complete accepted response;
-- add mapping/baseline context when it improves update quality;
-- reject stale responses after source or English changes.
+- reject stale responses after source or English changes;
+- reuse refresh for post-proposal interpretation updates.
 
-Dependencies: Phases 1–3 session, storage, and operation contracts.
+Acceptance criteria: a manual source edit marks English stale; explicit Code → English refreshes and persists it; failures/cancellation retain the previous English; success returns both hashes to synchronized baselines.
 
-Acceptance criteria:
-
-- a manual source edit marks English stale;
-- explicit Code → English refreshes and persists it;
-- failures/cancellation retain the previous English;
-- success returns both hashes to synchronized baselines.
-
-### Phase 5 — Conflicts, failures, and safeguards
+### Phase 5 — Conflicts, failures, and safeguards — complete
 
 **Purpose:** make normal divergence and unreliable operations safe.
 
-Major tasks:
+Delivered:
 
-- implement `BOTH_CHANGED` direction choice and warnings;
-- complete cancellation, timeout, retry, explicit account states, Codex-message pass-through, and local-error presentation;
-- enforce file/context/response limits;
-- handle incomplete code and external changes during operations;
-- harden persistence and recovery.
+- `BOTH_CHANGED` direction choice and warnings;
+- cancellation, 180s turn timeout, retry, authentication/usage-limited error classes, Codex-message pass-through, and local-error presentation;
+- file/English/response limits (including 256 KiB English);
+- incomplete code and external changes during operations;
+- persistence and recovery hardening.
 
-Dependencies: both directional flows.
+Acceptance criteria: both-changed never merges automatically; the selected side becomes authoritative only after success/approval; injected failures preserve current source and English; over-limit files are rejected clearly and non-destructively.
 
-Acceptance criteria:
-
-- both-changed never performs an automatic merge;
-- the selected side becomes authoritative only after success/approval;
-- every injected failure preserves current source and English;
-- over-limit files are rejected clearly and non-destructively.
-
-### Phase 6 — Polish, verification, and publishing — release candidate
+### Phase 6 — Polish, verification, and publishing — release candidate (partially open)
 
 **Purpose:** prepare an MVP that can be evaluated by real developers.
 
-Major tasks:
+Delivered so far:
 
-- accessibility and keyboard behavior;
-- onboarding, privacy disclosure, setup, and troubleshooting text;
-- extension-host, contract, and end-to-end test completion;
-- if core acceptance is already passing, optionally spike related-test mapping with evidence labels; omit it if results are misleading;
-- performance profiling and log review;
-- packaging and marketplace metadata;
-- manual acceptance certification and pilot feedback plan.
+- onboarding/privacy/troubleshooting and platform-limit documentation;
+- status surface accessibility information;
+- runtime-returned model and reasoning selection with workspace persistence and fallback;
+- custom interpretation webview as primary English UX, with native Markdown via `openMarkdown`;
+- 12-fixture fidelity corpus (`benchmark:fidelity` / `corpus:fidelity`);
+- packaging scripts and MIT/public repository metadata.
 
-Dependencies: all functional phases.
+Related-test mapping remains omitted (always `[]`) as deferred enrichment without a precision/reviewability gate.
 
-Release-candidate evidence on 2026-08-23: onboarding/privacy/troubleshooting and platform-limit documentation is complete; the status surface has explicit accessibility information; runtime-returned model and reasoning selection persists per workspace and safely falls back; deterministic and live suites pass 40 tests; and packaging produces a 25-file, 1.63 MiB VSIX with the MIT license and public repository metadata. Related-test mapping was omitted because it remains optional enrichment without a completed precision/reviewability gate. The fresh-profile manual workflow checklist, signed-out-account certification, and Marketplace publisher ownership remain release-owner gates documented in [MVP_RELEASE_CHECKLIST.md](./MVP_RELEASE_CHECKLIST.md).
+**Open release-owner items** (see [MVP_RELEASE_CHECKLIST.md](./MVP_RELEASE_CHECKLIST.md)): fresh-profile manual workflow checklist, signed-out-account certification, and Marketplace publisher ownership. Historical packaging snapshots (for example an earlier “40 tests” / ~1.63 MiB VSIX note from 2026-08-23) are obsolete; re-verify test counts and package size at release time rather than treating those figures as current.
 
 Acceptance criteria:
 
@@ -1046,9 +992,9 @@ Acceptance criteria:
 | Source changes while a request or diff is pending | Stale proposal overwrites newer work | High without controls | Operation IDs, base hashes, document versions, final pre-apply hash check | Yes if not mitigated |
 | Source/Markdown watchers form update loops | Repeated state changes or accidental model calls | Medium | One session coordinator, origin/expected-hash tokens, generated-section hash exclusion, model calls only from commands | Yes if destructive; otherwise fix before release |
 | Stored line mappings become stale | Wrong context or proposals | High | Validate exact line parity, hash whole source, regenerate on Code → English | No |
-| Optional related tests are missing or misleading, especially E2E candidates | Users or agents trust incorrect navigation hints | Medium | Separate direct/static-path/convention evidence, cap traversal, never claim completeness or regression detection | No; omit the enrichment if it is not trustworthy |
+| Optional related tests are missing (always empty in MVP) | Users may expect navigation hints that are not present | Low | Document empty Related tests section; defer enrichment until precision/reviewability gate exists | No |
 | Incomplete or invalid current syntax reduces interpretation quality | Common editing states fail | High | Best-effort requests, clear retryable error, never replace last good English on failure | No |
-| Large/minified files exceed context or stall the extension | Failed calls, latency, resource use | Medium | Byte/line/context/response limits, Phase 0 measurement, clear rejection, no MVP chunking | No |
+| Large/minified files exceed context or stall the extension | Failed calls, latency, resource use | Medium | Byte/line/English/response limits, Phase 0 measurement, clear rejection, no MVP chunking | No |
 | Git/external tools change source outside active editor | Cached English silently becomes inaccurate | High | Document and file watchers, exact content hashes, on-open recheck | Yes if staleness is not detected |
 | Markdown metadata is malformed or schema changes | A file cannot synchronize | Low–Medium | Versioned frontmatter, strict per-file validation, non-destructive migrations, retain original text | No |
 | Syntax validation passes but change is type/logically wrong | User applies broken behavior | High | Diagnostics warning, exact diff, explicit apply, honest product messaging; no correctness guarantee | No |
@@ -1071,18 +1017,20 @@ Before MVP release:
 
 ## 22. Deferred decisions
 
-The following are deliberately deferred until implementation evidence exists:
+The following remain deliberately deferred or unfinished:
 
 - function-level versus full-file interpretation for files beyond MVP limits;
 - stronger source mappings or semantic IR;
+- multi-edge connected-file context, heuristic candidates, and connected English summaries;
 - provider and language expansion;
 - on-save or idle synchronization;
 - whether teams should commit or ignore `.langclarity/` by default;
 - orphan retention and cleanup policy beyond preserving deleted-source interpretations;
-- optional related-test mapping quality and presentation;
-- benchmark corpus ownership, graders, sample size, repeated-run design, baseline thresholds, and pilot recruitment;
+- related-test mapping quality and presentation (MVP always leaves Related tests empty);
+- further fidelity corpus ownership, graders, sample size, repeated-run design, baseline thresholds, and pilot recruitment beyond the shipped 12-fixture suite;
 - whether a second critic/review call improves fidelity enough to justify its additional latency and usage;
 - analytics, accounts, licensing, and backend services;
-- a standalone editor.
+- a standalone editor;
+- Marketplace publisher ownership and remaining release-owner certification items.
 
-None is required to begin the MVP.
+None of these blocks the implemented MVP core flows.

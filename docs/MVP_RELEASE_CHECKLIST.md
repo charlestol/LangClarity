@@ -10,7 +10,7 @@ LANGCLARITY_LIVE_TEST=1 npm test
 npm run package:vsix
 ```
 
-The ordinary suite must pass without Codex authentication. The gated live smoke test must interpret and propose code through the local Codex runtime without changing its fixture. Packaging must produce a VSIX whose contents contain compiled extension code, runtime dependencies, README, changelog, and manifest, but exclude source tests, development configuration, protocol proof artifacts, and local workspace data.
+The ordinary suite must pass without Codex authentication. The gated live smoke test must interpret and propose code through the local Codex runtime without changing its fixture. Packaging must produce a VSIX whose contents contain compiled extension code, runtime dependencies, README, changelog, and manifest, but exclude source tests, development configuration, protocol proof artifacts, and local workspace data. The fidelity corpus (`npm run benchmark:fidelity`) exists for review evidence but is not a release gate yet.
 
 ## Manual acceptance certification
 
@@ -27,7 +27,8 @@ Use a fresh VS Code profile on a supported macOS system:
 9. Rename and delete a disposable source file; verify its English moves with the rename and is preserved under `.langclarity/.orphaned/` after deletion.
 10. Select a runtime-returned model and reasoning effort, restart, and verify the workspace preference remains selected.
 11. Try an unsupported extension and an over-limit fixture; verify clear non-destructive guidance.
-12. Review the LangClarity output channel and confirm it contains categories and base filenames only, not source, English, prompts, responses, credentials, or full paths.
+12. Exercise a usage-limited / exhausted Codex path (live account at quota, or a sim that surfaces `UsageLimitedError`): confirm source and English stay unchanged, the message is actionable, Retry is offered, and the output channel logs `category=usage-limited` — never an automatic purchase, API-key prompt, auth switch, or LangClarity-funded fallback.
+13. Review the LangClarity output channel and confirm it contains categories and base filenames only, not source, English, prompts, responses, credentials, or full paths.
 
 The repository uses the MIT license and advertises `https://github.com/charlestol/LangClarity`. Public Marketplace release additionally requires ownership of the `langclarity` publisher identifier. Do not invent or substitute that identity merely to bypass publishing requirements.
 
@@ -37,7 +38,7 @@ The repository uses the MIT license and advertises `https://github.com/charlesto
 - Test rejection with an actual older Codex binary, in addition to version-comparison fixtures.
 - Inject malformed data through a live protocol stream, in addition to client-boundary fixtures.
 - Certify Windows and Linux before describing them as supported platforms.
-- Related-file/test mapping remains omitted because it is optional enrichment and has not yet met a precision/reviewability gate.
+- Related-test mapping remains omitted (empty `relatedTests` in `repositoryFacts.ts`); contrast Technical One Pager’s optional related-test enrichment. Related files are shipped: direct workspace imports, labeled `(directly imported)`, rendered into English, and covered by tests.
 
 ## Pilot feedback plan
 

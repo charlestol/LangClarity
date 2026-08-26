@@ -132,9 +132,9 @@ As a developer, I can edit source normally, see that English is stale, and reque
 
 As a developer, I can change source through normal editing, Git, another extension, or an external tool and have LangClarity detect divergence rather than assuming it owns the file.
 
-### Related test context
+### Related test context (optional / not shipped)
 
-As a developer, I may see likely unit, integration, and E2E tests related to the current source file, together with the evidence for each mapping. This is useful context when available, not a promise of regression detection or a core MVP completion condition.
+As a future enrichment, a developer may see likely unit, integration, and E2E tests related to the current source file, together with the evidence for each mapping. Today the Related tests section is stubbed empty (`relatedTests: []`) and typically shows “None verified.” This is useful context when available, not a promise of regression detection or a core MVP completion condition.
 
 ### Safe failure
 
@@ -224,7 +224,7 @@ Before starting, the UI warns that unsynchronized changes on the losing side may
 - A LangClarity interpretation pane and the ordinary VS Code source editor should be visible side by side where practical.
 - The source remains a normal VS Code document with its existing language services, Git integration, and editor behavior.
 - The pane presents English Code as one editable text surface with a VS Code-like gutter containing every source line number. When synchronized, it has exactly one logical English row per source line: row N translates only source line N, blank source lines produce blank English rows, and neither side has missing, combined, duplicated, or reordered rows. Generated statements use the shortest clear everyday wording, normally one clause per row. Parent rows and indentation carry context so child rows avoid repetition; readable fragments are allowed. Visible literal values remain verbatim, unavoidable technical terms are explained, and identifiers appear only when they aid exact correspondence. Enter inserts an English row and shifts the current and following content and gutter positions down by one.
-- The English Code surface grows vertically to fit its logical rows so the pane owns vertical scrolling; long rows retain horizontal editor scrolling. It supports ordinary editor interactions including selection, undo/redo, clipboard and find behavior, Tab/Shift+Tab indentation, clickable line navigation, active-line indication, save shortcuts, and line/column status.
+- The English Code surface is a webview textarea (not a full VS Code text editor with Find or language services). It grows vertically to fit its logical rows so the pane owns vertical scrolling; long rows retain horizontal scrolling. It supports selection, browser undo/redo, clipboard, Tab/Shift+Tab indentation, clickable gutter line navigation, active-line indication, Cmd/Ctrl+S save, and line/column status.
 - Every tab uses the pane's full width, grows with its content, and relies on pane-level vertical scrolling. The remaining interpretation sections are grouped into read-only Overview, Structure, and Effects tabs.
 - Pane edits modify only the Behavior section of the backing Markdown text document and use normal VS Code dirty, save, and undo behavior.
 - The backing Markdown remains directly openable for inspection, interoperability, and repair.
@@ -237,12 +237,12 @@ Before starting, the UI warns that unsynchronized changes on the losing side may
 - The interpretation pane displays only the synchronization direction valid for its current state. It displays a neutral direction chooser for `BOTH_CHANGED`, and no synchronization action for `SYNCED` or invalid content.
 - Saving changed English or source reveals the corresponding apply action in the interpretation pane. If both changed, the pane reveals an explicit direction chooser.
 - The selected direction must be unambiguous in labels, confirmation text, progress, and results.
-- `Cmd/Ctrl+Enter` may invoke sync only if the active pane makes the direction unambiguous.
+- MVP does not contribute a `Cmd/Ctrl+Enter` sync keybinding. A future enhancement may bind it when the active pane makes the direction unambiguous.
 - MVP does not include on-save, debounce, idle, or per-keystroke AI sync.
 
 ### 10.4 Synchronization status
 
-The UI communicates these conceptual states; exact labels may differ:
+Session sync state is `SYNCED` | `CODE_CHANGED` | `ENGLISH_CHANGED` | `BOTH_CHANGED` | `ERROR` (exact labels may differ). Model operations show VS Code progress (`withProgress`) while they run; there is no separate `INTERPRETING` session state.
 
 | State | Meaning | Expected action |
 | --- | --- | --- |
@@ -250,7 +250,6 @@ The UI communicates these conceptual states; exact labels may differ:
 | `CODE_CHANGED` | Source differs from the last synchronized source | Code → English |
 | `ENGLISH_CHANGED` | English differs from its last synchronized version | English → Code |
 | `BOTH_CHANGED` | Both sides changed independently | Choose an authoritative side |
-| `INTERPRETING` | A model operation is in progress | Wait or cancel if supported |
 | `ERROR` | The last operation failed; saved content remains intact | Inspect error and retry |
 
 Status should be visible without interrupting ordinary editing.
@@ -349,11 +348,13 @@ LangClarity enforces documented practical file/context limits for model operatio
 
 LangClarity uses one error shape with a `source` of `codex` or `langclarity` and a user-visible message. Codex-originated failures preserve and display the message returned by Codex; LangClarity does not maintain a parallel Codex error taxonomy or infer meaning from message wording. LangClarity supplies messages only for failures it detects itself, such as a missing or incompatible runtime, a local timeout, a protocol failure, or unavailable workspace/source access. Authentication required and usage limited remain explicit account states, and cancellation remains a non-error outcome.
 
-### FR-16: Related-test mapping
+### FR-16: Related-test mapping (optional / post-MVP; stubbed)
 
-As optional enrichment after the core POC works, LangClarity may identify related unit, integration, and E2E test files using deterministic evidence where available. Direct imports, bounded static dependency paths, and established test naming/location conventions are distinguished so the UI does not present every candidate as equally certain.
+Not implemented. `repositoryFacts.relatedTests` is always `[]`, so the generated **Related tests** section renders `_None verified._`.
 
-Related tests may be shown with the English interpretation and alongside an English → Code proposal so developers and agents can inspect likely coverage. Mapping is a best-effort enrichment, is never described as exhaustive, and is not required to declare the core MVP complete. Regression detection and automatic selection or execution of tests are not MVP goals.
+As optional enrichment after the core POC, LangClarity may later identify related unit, integration, and E2E test files using deterministic evidence where available. Direct imports, bounded static dependency paths, and established test naming/location conventions should be distinguished so the UI does not present every candidate as equally certain.
+
+When shipped, related tests may be shown with the English interpretation and alongside an English → Code proposal so developers and agents can inspect likely coverage. Mapping would be a best-effort enrichment, never described as exhaustive, and is not required to declare the core MVP complete. Regression detection and automatic selection or execution of tests are not MVP goals.
 
 ### FR-17: Model selection
 
@@ -369,9 +370,11 @@ English → Code operates on the current VS Code source buffer, including unsave
 
 Creating source does not create English until explicit interpretation. Renaming or moving source moves the paired Markdown and updates local metadata without invoking Codex. Deleting source moves its Markdown to `.langclarity/.orphaned/` rather than silently deleting editable English. Each workspace root owns its own `.langclarity/` tree; untitled and out-of-workspace files are unsupported for MVP.
 
-### FR-20: Bounded connected-file context
+### FR-20: Direct import relationships
 
-LangClarity derives direct imports, exports, and resolvable module relationships locally and records their evidence in generated Markdown sections. It follows static paths only on explicit request, to a maximum of four edges, and includes connected-file summaries only when those files already have paired `.langclarity/` Markdown. Heuristic relationships are labeled as candidates. This is not repository-wide automatic interpretation or a semantic graph.
+LangClarity resolves direct import and re-export module specifiers locally (`repositoryFacts`) and records them in generated Markdown **Dependencies** and **Related files** sections. Workspace-resolved imports are listed with path and source line; unresolved or external modules are labeled as such. Related files are only directly imported workspace paths—not multi-hop graphs.
+
+**Future / optional:** follow static paths beyond one edge (for example up to four), include connected-file English summaries only when those files already have paired `.langclarity/` Markdown, and label heuristic relationships as candidates. None of that is current behavior. This is not repository-wide automatic interpretation or a semantic graph.
 
 ## 12. AI correctness and safety position
 
@@ -430,7 +433,7 @@ The MVP is acceptable when all of the following are demonstrated end to end:
 15. If runtime model enumeration is available, the selector shows only runtime-returned non-hidden models and safely falls back when a selection becomes unavailable.
 16. Unsupported languages and over-limit files fail with clear, non-destructive guidance.
 17. No source is routed through a LangClarity backend and no API key is requested.
-18. Direct connected-file relationships are locally verified and labeled, while heuristic candidates are not presented as facts or used to trigger automatic interpretation.
+18. Direct imports are locally resolved into Dependencies / Related files; multi-hop paths, paired-file summaries, and heuristic candidates are not current behavior and must not be presented as shipped facts or used to trigger automatic interpretation.
 19. Exhausted Codex usage preserves source and English, reports an actionable usage-limited state, and never triggers an automatic purchase, API-key request, authentication change, or LangClarity-funded fallback.
 
 ## 15. Success criteria for product validation
@@ -598,7 +601,7 @@ Start with a small internal baseline after the core two-direction workflow works
 
 The first quality retest used one file and one run per variant. A follow-up bounded corpus used six fixtures and 12 medium-effort calls. Both baseline and evidence-linked variants covered all 27 expert-authored facts with no detected prohibited claims or contradictions; the evidence-linked variant added 25 structurally valid source ranges while averaging 37% more latency. This supports evidence links for traceability, not a claim of improved factual accuracy.
 
-The next benchmark step is a 10–20-file representative corpus with repeated, randomized or rotated runs, expert-authored must-have and prohibited claims, retained raw outputs, and blinded semantic review. Comparisons should isolate effort, prompt rules, evidence schema, and connected-file/test context. Evidence grading must assess whether a cited range actually supports its claim, not merely whether the range is in bounds. A second critic/review model call remains deferred until those results show that its quality gain justifies added latency and usage.
+A versioned **12-fixture** interpretation fidelity corpus now lives under `benchmarks/fidelity/` and is runnable via `npm run benchmark:fidelity` (see that folder’s README). The next benchmark steps are repeated, randomized or rotated runs on that corpus (and any later expansions), expert-authored must-have and prohibited claims with retained raw outputs, and blinded semantic review. Comparisons should isolate effort, prompt rules, evidence schema, and connected-file/test context. Evidence grading must assess whether a cited range actually supports its claim, not merely whether the range is in bounds. A second critic/review model call remains deferred until those results show that its quality gain justifies added latency and usage.
 
 ## 17. Explicitly out of scope
 

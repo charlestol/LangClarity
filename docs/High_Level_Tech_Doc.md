@@ -43,12 +43,12 @@ LangClarity never silently changes `.gitignore`; after the first interpretation 
 6. **English → Code** creates a proposed source document, validates it, and opens an exact diff.
 7. After explicit approval, LangClarity regenerates every interpretation section from the proposed source and atomically applies both documents; it does not auto-save source.
 
-Conceptual states are `SYNCED`, `CODE_CHANGED`, `ENGLISH_CHANGED`, `BOTH_CHANGED`, `INTERPRETING`, and `ERROR`. Separate source and editable-English hashes derive state. Locally generated relationship/test evidence has its own revision hash so refreshing it does not impersonate a user English edit.
+Stable sync states are `SYNCED`, `CODE_CHANGED`, `ENGLISH_CHANGED`, and `BOTH_CHANGED`, plus session `ERROR` for invalid paired English. Separate source and editable-English hashes derive state. In-flight work is shown with VS Code `withProgress`, not an `INTERPRETING` sync state. Locally generated relationship facts use `mappingRevisionHash` so refreshing them does not impersonate a user English edit.
 
 ## Architecture
 
 ```text
-VS Code commands, CodeLens, and status
+VS Code commands, status bar, and interpretation pane
                    │
                    ▼
 Interpretation pane ─ Session/state coordinator ─ Native source document
@@ -62,7 +62,7 @@ Interpretation pane ─ Session/state coordinator ─ Native source document
                  Codex-managed ChatGPT auth
 ```
 
-Suggested modules are the extension entry point, Markdown-backed interpretation view, path/Markdown repository, file-session coordinator, source adapter, TS/JS parser/validator, `CodexInterpreter`, proposal/diff coordinator, and redacted logger. The interpretation view uses VS Code's custom text-editor API without a UI framework or hidden content store. Do not add a provider marketplace, semantic IR, or backend for the POC.
+Current modules include the extension entry point, `englishDocument`, `markdownRepository`, `sessionCoordinator`, `repositoryFacts`, `languageService`, `modelSelection`/`modelCommands`, `pairedFileLifecycle`, `interpreter`/`CodexInterpreter`, `proposalCoordinator`, `interpretationViewProvider`/`interpretationPaneDocument`, and `fidelity/*`. The interpretation pane is a `CustomTextEditorProvider` with a webview (`media/interpretationView.js`); there is no separate source-adapter or redacted-logger module. Do not add a provider marketplace, semantic IR, or backend for the POC.
 
 ## Detailed-design map
 
@@ -89,9 +89,9 @@ Error handling stays intentionally small. Authentication required and usage limi
 
 ## English document contract
 
-Each Markdown file uses versioned frontmatter containing the source path/hash, editable-English hash, language, prompt version, model, and interpretation time. Predictable sections cover purpose, responsibilities, behavior, key definitions, dependencies, related files/tests, side effects, and constraints.
+Each Markdown file uses versioned frontmatter containing `schemaVersion`, source path/hash, editable-English hash, optional `mappingRevisionHash`, language, prompt version, model, and interpretation time. Predictable sections cover purpose, responsibilities, behavior, key definitions, dependencies, related files/tests, side effects, and constraints.
 
-The model returns structured data with exactly one ordered English Code item per source line; LangClarity validates exact line-count and line-number parity before rendering Markdown. Each item uses the shortest clear everyday wording supported by its paired source line. Parent rows and indentation carry context to avoid repetition, while visible literal values remain verbatim. The Markdown is canonical after creation, including edits made by another coding agent. Key definitions, imports, exports, verified paths, and optional test relationships are derived locally and placed in generated sections instead of being trusted as model claims. Stable AST identity is not required.
+The model returns structured data with exactly one ordered English Code item per source line (`sourceLine` + `statement` only; no evidence or range fields in the live schema); LangClarity validates exact line-count and line-number parity before rendering Markdown. Each item uses the shortest clear everyday wording supported by its paired source line. Parent rows and indentation carry context to avoid repetition, while visible literal values remain verbatim. The Markdown is canonical after creation, including edits made by another coding agent. Key definitions, direct imports, and verified related-file paths are derived locally and placed in generated sections instead of being trusted as model claims; related-test lists are currently empty. Stable AST identity is not required.
 
 ## Safety and lifecycle invariants
 
@@ -107,17 +107,18 @@ The model returns structured data with exactly one ordered English Code item per
 
 On 2026-08-22, Codex CLI `0.148.0-alpha.15` passed the disposable-workspace protocol proof: stdio initialization, existing ChatGPT auth detection, six dynamically enumerated visible models, schema-valid turns in both directions, read-only/no-approval operation, cancellation, restart, missing-runtime handling, and zero fixture writes. Login initiation/cancellation still needs a later signed-out-account check; the existing authenticated path passed.
 
-The app-server remains explicitly experimental. Generate/contract-test protocol types against the tested minimum version, reject incompatible versions, and never hard-code the observed model catalog. The initial minimum-version rejection used a simulated older version and should later be certified against a real older binary when practical.
+The app-server remains explicitly experimental. Protocol request/notification types are hand-written in `CodexInterpreter`, not generated. Contract-test against the tested minimum version, reject incompatible versions, and never hard-code the observed model catalog. The initial minimum-version rejection used a simulated older version and should later be certified against a real older binary when practical.
 
-The first live response also proved that schema-valid output can still be semantically wrong: it contradicted itself about whether an input array was mutated. A controlled one-fixture retest found that the same runtime-default model at `medium` reasoning removed the observed contradiction. A subsequent six-fixture, 12-call medium-effort corpus found both baseline and evidence-linked prompts covered all 27 expert-authored facts with no detected prohibited claims or contradictions. The evidence-linked version added 25 structurally valid source ranges but averaged 37% more latency. Current evidence supports `medium` plus evidence links for reviewability; it does not show that the richer prompt improves factual accuracy. Do not add a second critic call yet.
+The first live response also proved that schema-valid output can still be semantically wrong: it contradicted itself about whether an input array was mutated. A controlled one-fixture retest found that the same runtime-default model at `medium` reasoning removed the observed contradiction. An earlier six-fixture, 12-call medium-effort experiment compared baseline and evidence-linked prompts; both covered all 27 expert-authored facts with no detected prohibited claims or contradictions, while the evidence-linked variant added source ranges at higher latency. The shipped Behavior schema keeps only `sourceLine` and `statement` (no evidence links). Recommend `medium` reasoning; do not add a second critic call yet.
 
 ## Starting operational defaults
 
 - Maximum source: 75 KiB or 2,000 lines, whichever comes first.
-- Static dependency path: four edges.
+- Maximum English document: 256 KiB.
+- Repository facts: direct imports only; `relatedTests` is always empty.
 - Concurrency: one request per file, two globally.
-- Slow notice: 30 seconds; hard timeout: three minutes.
-- Maximum structured response: 2 MiB.
+- Protocol request timeout: 30 seconds (`REQUEST_TIMEOUT_MS`); hard turn timeout: 180 seconds (`TURN_TIMEOUT_MS`). No user-facing slow notice.
+- Maximum protocol message line: 2 MiB.
 
 These are code defaults for the POC, not user settings, and can change after measurement.
 
@@ -130,14 +131,14 @@ These are code defaults for the POC, not user settings, and can change after mea
 5. Code → English refresh and both-changed authority choice.
 6. Failure hardening, size limits, verification, and publishing.
 
-Related-test mapping is optional enrichment: start with direct imports, TypeScript-resolved paths up to four edges, common `*.test.*`/`*.spec.*`/`__tests__` conventions, and labeled Playwright/Cypress candidates. It is documentation/navigation help, not regression detection and not an MVP release gate.
+MVP directional sync flows (slices 1–5) and a 12-fixture fidelity corpus under `benchmarks/fidelity/` (with `src/fidelity/*` scoring) are implemented. Related-test mapping remains optional enrichment and is not implemented beyond an empty `relatedTests` slot; repository facts cover direct imports only. It is documentation/navigation help if added later, not regression detection and not an MVP release gate.
 
 ## Open, non-blocking items
 
 - Whether `.langclarity/` should be committed or ignored for a given team.
 - Orphan retention/cleanup and advanced relinking UX.
-- Benchmark corpus ownership, expert graders, participant count, baseline thresholds, and pilot recruitment.
-- Whether a second critic/review call earns its added latency and usage on the larger repeated corpus.
-- Precision/recall requirements and UI for optional connected-test mapping.
+- Expert graders, participant count, baseline thresholds, and pilot recruitment for fidelity evaluation (the 12-fixture corpus and automated pattern scoring already exist; product claims still need blinded review).
+- Whether a second critic/review call earns its added latency and usage on larger repeated runs.
+- Precision/recall requirements and UI if related-test mapping is ever implemented.
 
 Product requirements and acceptance criteria are in [PRD.md](./PRD.md). Implementation contracts, workflows, proof steps, testing, risks, and release gates are in [Technical_One_Pager.md](./Technical_One_Pager.md).
