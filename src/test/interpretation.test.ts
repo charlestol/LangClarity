@@ -91,6 +91,38 @@ suite('Interpretation', () => {
 		);
 	});
 
+	test('keeps multiline declaration values explained while allowing structural rows to stay blank', () => {
+		const source = [
+			'const supportedLocales = [',
+			'  "en-US",',
+			'  "es-MX",',
+			'];',
+		].join('\n');
+		const interpretation = {
+			purpose: 'List supported locales.',
+			responsibilities: ['Define the supported locales.'],
+			behavior: [
+				{ statement: 'Supported locales:', sourceLine: 1 },
+				{ statement: '  English for the United States: "en-US".', sourceLine: 2 },
+				{ statement: '  Spanish for Mexico: "es-MX".', sourceLine: 3 },
+				{ statement: '', sourceLine: 4 },
+			],
+			sideEffects: [],
+			constraints: [],
+		};
+
+		assert.deepStrictEqual(validateInterpretation(interpretation, source), interpretation);
+		assert.throws(
+			() => validateInterpretation({
+				...interpretation,
+				behavior: interpretation.behavior.map((item) => (
+					item.sourceLine === 2 ? { ...item, statement: '' } : item
+				)),
+			}, source),
+			/invalid interpretation/u,
+		);
+	});
+
 	test('renders versioned Markdown and escapes model-controlled links', () => {
 		const markdown = renderInterpretation({
 			result: {
@@ -114,7 +146,7 @@ suite('Interpretation', () => {
 		});
 
 		assert.match(markdown, /schemaVersion: 1/u);
-		assert.match(markdown, /promptVersion: "6"/u);
+		assert.match(markdown, /promptVersion: "7"/u);
 		assert.match(markdown, /editableEnglishHash: "sha256:/u);
 		assert.ok(markdown.includes('Describe \\[unsafe\\](command:run).'));
 		assert.match(markdown, /langclarity:generated:start relationships/u);

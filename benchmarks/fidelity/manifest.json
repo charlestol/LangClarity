@@ -1,6 +1,6 @@
 {
   "corpusVersion": "1",
-  "promptVersionExpected": "6",
+  "promptVersionExpected": "7",
   "description": "Interpretation-fidelity corpus for Code → English. Automated pattern scores are evidence for review, not proof of semantic correctness.",
   "heldOutIds": [
     "06-incomplete",

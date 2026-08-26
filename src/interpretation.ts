@@ -97,6 +97,10 @@ function isEnglishCodeLine(value: unknown): value is string {
 		&& !/[\r\n\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value);
 }
 
+function isStructuralSourceLine(value: string): boolean {
+	return /^[\s()[\]{},;]*$/u.test(value);
+}
+
 export function validateInterpretation(value: unknown, source: string | number): InterpretationResult {
 	const sourceLines = typeof source === 'string' ? source.split(/\r\n|\r|\n/u) : undefined;
 	const sourceLineCount = sourceLines?.length ?? source;
@@ -113,12 +117,16 @@ export function validateInterpretation(value: unknown, source: string | number):
 
 	const behavior = value.behavior.map((item, index): EnglishCodeLine => {
 		const sourceIsBlank = sourceLines?.[index].trim().length === 0;
+		const sourceIsStructural = sourceLines !== undefined
+			&& isStructuralSourceLine(sourceLines[index]);
 		if (!isRecord(item)
 			|| !hasExactKeys(item, ['sourceLine', 'statement'])
 			|| !isEnglishCodeLine(item.statement)
 			|| item.sourceLine !== index + 1
 			|| (sourceIsBlank === true && item.statement !== '')
-			|| (sourceIsBlank === false && item.statement.trim().length === 0)) {
+			|| (sourceIsBlank === false
+				&& sourceIsStructural === false
+				&& item.statement.trim().length === 0)) {
 			throw new Error('Codex returned an invalid interpretation.');
 		}
 		return {
@@ -256,7 +264,7 @@ export function renderInterpretation(input: RenderInterpretationInput): string {
 		editableEnglishHash: hashEditableBody(body),
 		mappingRevisionHash: hashText(JSON.stringify(repositoryFacts)),
 		languageId: input.languageId,
-		promptVersion: '6',
+		promptVersion: '7',
 		model: input.model,
 		interpretedAt: input.interpretedAt,
 	}, body);

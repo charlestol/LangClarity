@@ -174,6 +174,8 @@ suite('Extension contributions', () => {
 		assert.match(interpreter, /shortest clear wording/u);
 		assert.match(interpreter, /opening or parent row establish context/u);
 		assert.match(interpreter, /Readable fragments are allowed/u);
+		assert.match(interpreter, /explain every element or property on its own row/u);
+		assert.match(interpreter, /line containing only structural punctuation/u);
 		assert.match(interpreter, /known value verbatim/u);
 		assert.match(interpreter, /Avoid unexplained technical terms/u);
 		assert.match(interpreter, /Do not use uppercase pseudocode keywords/u);

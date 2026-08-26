@@ -298,7 +298,7 @@ sourceHash: sha256:...
 editableEnglishHash: sha256:...
 mappingRevisionHash: sha256:...
 languageId: typescript
-promptVersion: 6
+promptVersion: 7
 model: codex-default
 interpretedAt: 2026-08-22T00:00:00Z
 ---
@@ -369,8 +369,9 @@ Validation rules:
 
 - `behavior` contains exactly one item per submitted source line;
 - item N has `sourceLine: N`, with no gaps, duplicates, combinations, or reordering;
-- statements are bounded single-line text, and blank source lines use empty statements;
+- statements are bounded single-line text, and blank or punctuation-only structural source lines use empty statements;
 - each nonblank statement explains only its paired source line in everyday language and preserves visible literal values verbatim;
+- multiline declarations use their opening row for shared purpose while retaining each meaningful element or property and its visible value on its own row;
 - line correspondence improves inspectability but never proves correctness or authorizes edits by itself.
 
 Line identity is positional and recalculated when synchronization succeeds. MVP does not require stable AST-node identity across edits or regenerations.
@@ -418,7 +419,7 @@ Code → English requests should instruct Codex to:
 - make only claims supported by the submitted source and prefer omission when uncertain;
 - distinguish mutation of inputs from mutation of temporary or copied values;
 - check behavior, side effects, and constraints for contradictions before returning;
-- use an empty statement for each blank source line;
+- use an empty statement for each blank or punctuation-only structural source line;
 - return only the required structured result.
 
 LangClarity derives source path/hash, key definitions, dependencies, and direct related files locally. These deterministic facts may be supplied as context or rendered into generated Markdown sections, but they are not delegated to unconstrained model output. Related tests are not discovered in MVP.
