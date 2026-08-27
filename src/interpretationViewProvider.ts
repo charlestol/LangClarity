@@ -1,17 +1,27 @@
 import { randomBytes } from 'node:crypto';
+import path from 'node:path';
 import * as vscode from 'vscode';
 import {
 	deriveSyncState,
 	parseEnglishDocument,
 	type ParsedEnglishDocument,
 } from './englishDocument';
-import { hashText, MAX_SOURCE_LINES } from './interpretation';
+import {
+	deriveRepositoryContextState,
+	hashText,
+	MAX_SOURCE_LINES,
+	refreshRepositoryFacts,
+	repositoryFactsRevisionHash,
+	type RepositoryContextState,
+} from './interpretation';
 import {
 	behaviorRowsForSource,
 	interpretationPaneContent,
 	paneBehaviorSectionEdit,
 	type PaneBehaviorItem,
 } from './interpretationPaneDocument';
+import { replaceTextDocumentAndSave } from './markdownRepository';
+import { repositoryFactsFor } from './repositoryFacts';
 
 export const interpretationViewType = 'langclarity.interpretationView';
 const allowedSyncCommands = new Set([
@@ -25,6 +35,7 @@ type PaneMessage =
 	| { type: 'ready' }
 	| { type: 'update'; behavior: unknown }
 	| { type: 'save'; behavior: unknown }
+	| { type: 'refreshRepositoryContext'; behavior: unknown }
 	| { type: 'command'; command: unknown; behavior: unknown };
 
 type PendingPaneRefresh = 'state' | 'content';
@@ -53,6 +64,7 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 		};
 		const currentSourceDocument = async (): Promise<vscode.TextDocument> =>
 			vscode.workspace.openTextDocument(resolvedSourceUri());
+		const sourceWorkspace = vscode.workspace.getWorkspaceFolder(resolvedSourceUri());
 
 		const syncState = (
 			parsed: ParsedEnglishDocument,
@@ -65,14 +77,38 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 				parsed.frontmatter.editableEnglishHash,
 			);
 		};
-		const currentState = async (): Promise<string> => syncState(
-			parseEnglishDocument(document.getText()),
-			await currentSourceDocument(),
-		);
+		const repositoryContextState = async (
+			parsed: ParsedEnglishDocument,
+			sourceDocument: vscode.TextDocument,
+		): Promise<RepositoryContextState> => {
+			if (!sourceWorkspace) {
+				return 'STALE';
+			}
+			const facts = await repositoryFactsFor(
+				sourceDocument.getText(),
+				sourceDocument.uri,
+				sourceWorkspace.uri,
+			);
+			return deriveRepositoryContextState(
+				parsed.frontmatter.mappingRevisionHash,
+				repositoryFactsRevisionHash(facts),
+			);
+		};
+		const currentState = async (): Promise<{
+			status: string;
+			repositoryContextStatus: RepositoryContextState;
+		}> => {
+			const parsed = parseEnglishDocument(document.getText());
+			const sourceDocument = await currentSourceDocument();
+			return {
+				status: syncState(parsed, sourceDocument),
+				repositoryContextStatus: await repositoryContextState(parsed, sourceDocument),
+			};
+		};
 
 		const sendState = async (): Promise<void> => {
 			try {
-				await panel.webview.postMessage({ type: 'status', status: await currentState() });
+				await panel.webview.postMessage({ type: 'status', ...await currentState() });
 			} catch (error) {
 				await panel.webview.postMessage({
 					type: 'error',
@@ -86,6 +122,7 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 				const sourceDocument = await currentSourceDocument();
 				const parsed = parseEnglishDocument(document.getText());
 				const content = interpretationPaneContent(parsed);
+				const contextStatus = await repositoryContextState(parsed, sourceDocument);
 				const gridLineCount = Math.max(
 					sourceDocument.lineCount,
 					...content.behavior.map((item) => item.endLine ?? 1),
@@ -96,6 +133,7 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 						...content,
 						behavior: behaviorRowsForSource(content.behavior, gridLineCount),
 						status: syncState(parsed, sourceDocument),
+						repositoryContextStatus: contextStatus,
 						sourceLineCount: sourceDocument.lineCount,
 					},
 				});
@@ -162,6 +200,36 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 			}
 		};
 
+		const refreshRepositoryContext = async (rawBehavior: unknown): Promise<void> => {
+			try {
+				const currentText = document.getText();
+				const behavior = validBehavior(rawBehavior);
+				if (document.isDirty || paneBehaviorSectionEdit(currentText, behavior).updatedText !== currentText) {
+					throw new Error('Save the English interpretation before refreshing repository context.');
+				}
+				if (!sourceWorkspace) {
+					throw new Error('The paired source is no longer inside a workspace.');
+				}
+				const sourceDocument = await currentSourceDocument();
+				const facts = await repositoryFactsFor(
+					sourceDocument.getText(),
+					sourceDocument.uri,
+					sourceWorkspace.uri,
+				);
+				const updated = refreshRepositoryFacts(currentText, facts);
+				if (updated !== currentText) {
+					await replaceTextDocumentAndSave(document, currentText, updated);
+				}
+				await panel.webview.postMessage({ type: 'saved', saved: true });
+				await sendContent();
+			} catch (error) {
+				await panel.webview.postMessage({
+					type: 'error',
+					message: error instanceof Error ? error.message : 'Repository context could not be refreshed.',
+				});
+			}
+		};
+
 		panel.webview.onDidReceiveMessage(async (message: PaneMessage) => {
 			switch (message.type) {
 				case 'ready':
@@ -172,6 +240,9 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 					break;
 				case 'save':
 					await updateBehavior(message.behavior, true);
+					break;
+				case 'refreshRepositoryContext':
+					await refreshRepositoryContext(message.behavior);
 					break;
 				case 'command': {
 					if (message.command === 'langclarity.openMarkdown') {
@@ -202,6 +273,11 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 				return;
 			}
 			if (event.document.uri.toString() !== document.uri.toString()) {
+				if (isSupportedSource(event.document.uri)
+					&& sourceWorkspace?.uri.toString()
+						=== vscode.workspace.getWorkspaceFolder(event.document.uri)?.uri.toString()) {
+					scheduleRefresh('state');
+				}
 				return;
 			}
 			if (lastAppliedText === document.getText()) {
@@ -214,7 +290,10 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 		const saveSubscription = vscode.workspace.onDidSaveTextDocument((savedDocument) => {
 			const englishSaved = savedDocument.uri.toString() === document.uri.toString();
 			const sourceSaved = savedDocument.uri.toString() === resolvedSourceUri().toString();
-			if (!englishSaved && !sourceSaved) {
+			const workspaceSourceSaved = isSupportedSource(savedDocument.uri)
+				&& sourceWorkspace?.uri.toString()
+					=== vscode.workspace.getWorkspaceFolder(savedDocument.uri)?.uri.toString();
+			if (!englishSaved && !sourceSaved && !workspaceSourceSaved) {
 				return;
 			}
 			void (async () => {
@@ -222,10 +301,7 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 					await panel.webview.postMessage({ type: 'saved', saved: true });
 				}
 				try {
-					await panel.webview.postMessage({
-						type: 'documentSaved',
-						status: await currentState(),
-					});
+					await panel.webview.postMessage({ type: 'documentSaved', ...await currentState() });
 				} catch (error) {
 					await panel.webview.postMessage({
 						type: 'error',
@@ -234,14 +310,28 @@ export class InterpretationViewProvider implements vscode.CustomTextEditorProvid
 				}
 			})();
 		});
+		const sourceWatcher = sourceWorkspace
+			? vscode.workspace.createFileSystemWatcher(
+				new vscode.RelativePattern(sourceWorkspace, '**/*.{ts,tsx,js,jsx}'),
+			)
+			: undefined;
+		const scheduleRepositoryRefresh = (): void => scheduleRefresh('state');
+		sourceWatcher?.onDidCreate(scheduleRepositoryRefresh);
+		sourceWatcher?.onDidChange(scheduleRepositoryRefresh);
+		sourceWatcher?.onDidDelete(scheduleRepositoryRefresh);
 		panel.onDidDispose(() => {
 			if (refreshTimer) {
 				clearTimeout(refreshTimer);
 			}
 			changeSubscription.dispose();
 			saveSubscription.dispose();
+			sourceWatcher?.dispose();
 		});
 	}
+}
+
+function isSupportedSource(uri: vscode.Uri): boolean {
+	return new Set(['.ts', '.tsx', '.js', '.jsx']).has(path.posix.extname(uri.path).toLowerCase());
 }
 
 function validBehavior(value: unknown): PaneBehaviorItem[] {
@@ -276,10 +366,11 @@ function paneHtml(webview: vscode.Webview, stylesheetUri: vscode.Uri, scriptUri:
 </head>
 <body>
 	<div class="header">
-		<div class="header-row"><h1 id="source">LangClarity</h1><span class="status" id="status">Loading</span><span id="save-state"></span></div>
+		<div class="header-row"><h1 id="source">LangClarity</h1><span class="status" id="status">Loading</span><span class="status" id="repository-context-status">Repository context: Checking</span><span id="save-state"></span></div>
 		<div class="meta" id="meta"></div>
 		<div class="actions">
 			<button id="suggested-action" hidden></button>
+			<button class="secondary" id="refresh-repository-context" hidden>Refresh Repository Context</button>
 			<button class="secondary" id="save">Save</button>
 			<button class="secondary" data-command="langclarity.openMarkdown">Open Markdown</button>
 		</div>

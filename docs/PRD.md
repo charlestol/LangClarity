@@ -226,6 +226,7 @@ Before starting, the UI warns that unsynchronized changes on the losing side may
 - The pane presents English Code as one editable text surface with a VS Code-like gutter containing every source line number. When synchronized, it has exactly one logical English row per source line: row N translates only source line N, blank and punctuation-only structural lines produce blank English rows, and neither side has missing, combined, duplicated, or reordered rows. Generated statements use the shortest clear everyday wording, normally one clause per row. Parent rows and indentation carry context so child rows avoid repetition; readable fragments are allowed. Every meaningful element or property in a multiline declaration retains its own row and visible literal value. Unavoidable technical terms are explained, and identifiers appear only when they aid exact correspondence. Enter inserts an English row and shifts the current and following content and gutter positions down by one.
 - The English Code surface is a webview textarea (not a full VS Code text editor with Find or language services). It grows vertically to fit its logical rows so the pane owns vertical scrolling; long rows retain horizontal scrolling. It supports selection, browser undo/redo, clipboard, Tab/Shift+Tab indentation, clickable gutter line navigation, active-line indication, Cmd/Ctrl+S save, and line/column status.
 - Every tab uses the pane's full width, grows with its content, and relies on pane-level vertical scrolling. The remaining interpretation sections are grouped into read-only Overview, Structure, and Effects tabs.
+- The pane displays repository-context freshness separately from the editable synchronization state. While an interpretation is open, local source changes cause deterministic repository facts to be recomputed and compared with `mappingRevisionHash`. Out-of-date context offers an explicit local refresh that does not call Codex or change editable-English synchronization state.
 - Pane edits modify only the Behavior section of the backing Markdown text document and use normal VS Code dirty, save, and undo behavior.
 - The backing Markdown remains directly openable for inspection, interoperability, and repair.
 - The view identifies the source file whose English representation is open.
@@ -305,6 +306,8 @@ The Markdown file is the persistent English representation, not a derived third 
 ### FR-6: Staleness detection
 
 LangClarity computes a deterministic hash of the synchronized source content. A mismatch with current content marks code changed or the cached interpretation stale.
+
+Generated repository facts use a separate deterministic `mappingRevisionHash`. A mismatch marks only repository context out of date; it does not change `SYNCED`, `CODE_CHANGED`, `ENGLISH_CHANGED`, or `BOTH_CHANGED`. Refreshing repository context replaces only the generated relationship region and mapping hash.
 
 ### FR-7: Manual directional synchronization
 

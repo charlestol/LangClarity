@@ -135,6 +135,10 @@ suite('Extension contributions', () => {
 		assert.match(provider, /rows="1"/u);
 		assert.match(provider, /id="cursor-position"/u);
 		assert.match(provider, /id="suggested-action"/u);
+		assert.match(provider, /id="repository-context-status"/u);
+		assert.match(provider, /id="refresh-repository-context"/u);
+		assert.match(provider, /refreshRepositoryFacts/u);
+		assert.match(provider, /mappingRevisionHash/u);
 		assert.match(provider, /data-tab="behavior">English Code</u);
 		assert.doesNotMatch(provider, /<h2>English Code<\/h2>/u);
 		assert.doesNotMatch(provider, /data-command="langclarity\.englishToCode"/u);
@@ -158,12 +162,15 @@ suite('Extension contributions', () => {
 		assert.match(script, /Apply Code → English/u);
 		assert.match(script, /Choose Apply Direction/u);
 		assert.match(script, /message\.type === 'documentSaved'/u);
+		assert.match(script, /Repository context: Out of date/u);
+		assert.match(script, /refreshRepositoryContext/u);
 		assert.match(stylesheet, /overflow-y: hidden/u);
 		assert.match(stylesheet, /main \{ padding: 20px 0 48px; \}/u);
 		assert.match(stylesheet, /\.panel \{ box-sizing: border-box; display: none; width: 100%; \}/u);
 		assert.doesNotMatch(stylesheet, /#overview, #structure, #effects/u);
 		assert.doesNotMatch(stylesheet, /main \{ max-width: 920px/u);
 		assert.doesNotMatch(stylesheet, /height: min\(58vh, 620px\)/u);
+		assert.match(stylesheet, /repository-context-status\[data-state="STALE"\]/u);
 	});
 
 	test('requests exact source-aligned everyday English from Codex', () => {

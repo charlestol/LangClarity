@@ -43,7 +43,7 @@ LangClarity never silently changes `.gitignore`; after the first interpretation 
 6. **English → Code** creates a proposed source document, validates it, and opens an exact diff.
 7. After explicit approval, LangClarity regenerates every interpretation section from the proposed source and atomically applies both documents; it does not auto-save source.
 
-Stable sync states are `SYNCED`, `CODE_CHANGED`, `ENGLISH_CHANGED`, and `BOTH_CHANGED`, plus session `ERROR` for invalid paired English. Separate source and editable-English hashes derive state. In-flight work is shown with VS Code `withProgress`, not an `INTERPRETING` sync state. Locally generated relationship facts use `mappingRevisionHash` so refreshing them does not impersonate a user English edit.
+Stable sync states are `SYNCED`, `CODE_CHANGED`, `ENGLISH_CHANGED`, and `BOTH_CHANGED`, plus session `ERROR` for invalid paired English. Separate source and editable-English hashes derive state. In-flight work is shown with VS Code `withProgress`, not an `INTERPRETING` sync state. Locally generated relationship facts have an independent `CURRENT` or `STALE` repository-context status: the pane recomputes their deterministic hash while open and compares it with `mappingRevisionHash`. An explicit local refresh replaces only the generated relationship region and its mapping hash, so it does not impersonate a user English edit or call Codex.
 
 ## Architecture
 
@@ -117,7 +117,7 @@ The first live response also proved that schema-valid output can still be semant
 - Maximum English document: 256 KiB.
 - Repository facts: direct imports only; `relatedTests` is always empty.
 - Concurrency: one request per file, two globally.
-- Protocol request timeout: 30 seconds (`REQUEST_TIMEOUT_MS`); hard turn timeout: 180 seconds (`TURN_TIMEOUT_MS`). No user-facing slow notice.
+- Protocol request timeout: 30 seconds (`REQUEST_TIMEOUT_MS`); ordinary turns time out after 180 seconds, while code-to-English turns scale with source length up to 15 minutes at 2,000 lines. No user-facing slow notice.
 - Maximum protocol message line: 2 MiB.
 
 These are code defaults for the POC, not user settings, and can change after measurement.

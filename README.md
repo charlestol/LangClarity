@@ -29,7 +29,7 @@ Verified on macOS (uses ChatGPT.app's bundled Codex when present, otherwise `cod
 3. Choose **Interpret File** to create the English pair and open the interpretation pane. If a pair already exists, choose **Open Interpretation** instead.
 4. Review the provider disclosure on first use, then edit English or sync.
 
-The source and interpretation pane open side by side. **English Code** is editable with source line numbers in a gutter; **Overview**, **Structure**, and **Effects** are read-only summaries. Sync state appears in the pane and status bar.
+The source and interpretation pane open side by side. **English Code** is editable with source line numbers in a gutter; **Overview**, **Structure**, and **Effects** are read-only summaries. Sync state appears in the pane and status bar. The pane separately marks generated repository context as current or out of date; refreshing that context is local and does not call Codex.
 
 **Right-click → LangClarity** is the main entry point for interpretation, sync, and **Select Codex Model and Reasoning**. When only one sync action applies, the pane also shows a suggested-action button. Click the status bar when it offers a sync command (for example, when both sides changed). **Open Markdown** in the pane opens the raw `.langclarity` file beside the source.
 

@@ -452,7 +452,7 @@ interface InterpretationFrontmatter {
 }
 ```
 
-The Markdown body is the current editable English and is not duplicated in `workspaceState`. `editableEnglishHash` is the last synchronized baseline of user-editable sections. `mappingRevisionHash` covers normalized local relationship/test evidence and relevant resolver configuration separately. Updating generated evidence alone does not change synchronization state.
+The Markdown body is the current editable English and is not duplicated in `workspaceState`. `editableEnglishHash` is the last synchronized baseline of user-editable sections. `mappingRevisionHash` covers the deterministic local repository facts rendered in the generated relationship section. While a pane is open, LangClarity recomputes those facts after relevant workspace source changes and compares their hash with this baseline. A mismatch produces an independent `STALE` repository-context status and an explicit local refresh action. Updating generated evidence alone does not change editable synchronization state or invoke Codex.
 
 `workspaceState` may hold non-content preferences such as the selected model and dismissed notices. It must not become a hidden second copy of English.
 
@@ -530,7 +530,7 @@ Keep proposals in memory. Persisting abandoned AI output creates recovery and pr
 
 - Hash the exact source text seen by VS Code with SHA-256.
 - Hash a deterministic parse/serialization of user-editable English sections. Exclude frontmatter fields and generated-section bodies.
-- Hash normalized dependency/test evidence and relevant configuration separately as `mappingRevisionHash`.
+- Hash the deterministic repository facts rendered in the generated relationship section separately as `mappingRevisionHash`.
 - Do not trim or normalize source before hashing; whitespace edits still make cached English stale.
 - Define one canonical Markdown parser/renderer and cover round trips with fixtures. A render/parse round trip must not silently lose user text.
 

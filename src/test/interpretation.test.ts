@@ -13,11 +13,15 @@ import {
 	toolRestrictedAppServerArgs,
 	toolRestrictedThreadPolicy,
 } from '../codexInterpreter';
+import { parseEnglishDocument } from '../englishDocument';
 import {
 	englishUriFor,
+	deriveRepositoryContextState,
 	hashText,
 	lineCount,
+	refreshRepositoryFacts,
 	relativeSourcePath,
+	repositoryFactsRevisionHash,
 	renderInterpretation,
 	sourceAccessError,
 	sourceEligibilityError,
@@ -155,6 +159,67 @@ suite('Interpretation', () => {
 		assert.ok(markdown.includes('Function run (line 1)'));
 		assert.ok(markdown.includes('./dependency → src/dependency.ts (line 1)'));
 		assert.ok(markdown.includes('_None verified._'));
+	});
+
+	test('detects and refreshes stale generated repository facts without changing editable English', () => {
+		const originalFacts = {
+			keyDefinitions: ['Function run (line 1)'],
+			dependencies: ['./old → src/old.ts (line 1)'],
+			relatedFiles: ['src/old.ts (directly imported)'],
+			relatedTests: [],
+		};
+		const currentFacts = {
+			...originalFacts,
+			dependencies: ['./new → src/new.ts (line 1)'],
+			relatedFiles: ['src/new.ts (directly imported)'],
+		};
+		const markdown = renderInterpretation({
+			result: {
+				purpose: 'Run the task.',
+				responsibilities: [],
+				behavior: [{ statement: 'Run the task.', sourceLine: 1 }],
+				sideEffects: [],
+				constraints: [],
+			},
+			sourcePath: 'src/example.ts',
+			sourceHash: hashText('run();'),
+			languageId: 'typescript',
+			model: 'runtime-default',
+			interpretedAt: '2026-08-22T00:00:00.000Z',
+			repositoryFacts: originalFacts,
+		}).replaceAll('\n', '\r\n');
+		const before = parseEnglishDocument(markdown);
+
+		assert.strictEqual(
+			deriveRepositoryContextState(
+				before.frontmatter.mappingRevisionHash,
+				repositoryFactsRevisionHash(originalFacts),
+			),
+			'CURRENT',
+		);
+		assert.strictEqual(
+			deriveRepositoryContextState(
+				before.frontmatter.mappingRevisionHash,
+				repositoryFactsRevisionHash(currentFacts),
+			),
+			'STALE',
+		);
+		assert.strictEqual(
+			deriveRepositoryContextState(undefined, repositoryFactsRevisionHash(currentFacts)),
+			'STALE',
+		);
+
+		const refreshed = refreshRepositoryFacts(markdown, currentFacts);
+		const after = parseEnglishDocument(refreshed);
+		assert.ok(refreshed.includes('./new → src/new.ts (line 1)'));
+		assert.ok(!refreshed.includes('./old → src/old.ts (line 1)'));
+		assert.ok(!/(?<!\r)\n/u.test(refreshed));
+		assert.strictEqual(after.currentEnglishHashes[0], before.currentEnglishHashes[0]);
+		assert.strictEqual(after.frontmatter.editableEnglishHash, before.frontmatter.editableEnglishHash);
+		assert.strictEqual(
+			after.frontmatter.mappingRevisionHash,
+			repositoryFactsRevisionHash(currentFacts),
+		);
 	});
 
 	test('derives top-level definitions and static module references', async () => {

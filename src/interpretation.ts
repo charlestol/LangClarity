@@ -1,6 +1,6 @@
 import path from 'node:path';
 import * as vscode from 'vscode';
-import { hashEditableBody, renderFrontmatter } from './englishDocument';
+import { hashEditableBody, parseEnglishDocument, renderFrontmatter } from './englishDocument';
 import { escapeMarkdown } from './markdownText';
 import { isRecord } from './typeGuards';
 import type { RepositoryFacts } from './repositoryFacts';
@@ -62,6 +62,11 @@ export interface RenderInterpretationInput {
 	interpretedAt: string;
 	repositoryFacts?: RepositoryFacts;
 }
+
+export type RepositoryContextState = 'CURRENT' | 'STALE';
+
+const generatedRelationshipsStart = '<!-- langclarity:generated:start relationships -->';
+const generatedRelationshipsEnd = '<!-- langclarity:generated:end relationships -->';
 
 const supportedLanguageIds = new Set([
 	'typescript',
@@ -200,6 +205,60 @@ function renderVerifiedList(items: string[]): string {
 		: items.map((item) => `- ${escapeMarkdown(item)}`).join('\n');
 }
 
+export function repositoryFactsRevisionHash(repositoryFacts: RepositoryFacts): string {
+	return hashText(JSON.stringify(repositoryFacts));
+}
+
+export function deriveRepositoryContextState(
+	baselineRevisionHash: string | undefined,
+	currentRevisionHash: string,
+): RepositoryContextState {
+	return baselineRevisionHash === currentRevisionHash ? 'CURRENT' : 'STALE';
+}
+
+function renderRepositoryFacts(repositoryFacts: RepositoryFacts): string {
+	return [
+		generatedRelationshipsStart,
+		'## Key definitions',
+		'',
+		renderVerifiedList(repositoryFacts.keyDefinitions),
+		'',
+		'## Dependencies',
+		'',
+		renderVerifiedList(repositoryFacts.dependencies),
+		'',
+		'## Related files',
+		'',
+		renderVerifiedList(repositoryFacts.relatedFiles),
+		'',
+		'## Related tests',
+		'',
+		renderVerifiedList(repositoryFacts.relatedTests),
+		generatedRelationshipsEnd,
+	].join('\n');
+}
+
+export function refreshRepositoryFacts(markdown: string, repositoryFacts: RepositoryFacts): string {
+	parseEnglishDocument(markdown);
+	const startIndex = markdown.indexOf(generatedRelationshipsStart);
+	const endIndex = markdown.indexOf(generatedRelationshipsEnd, startIndex)
+		+ generatedRelationshipsEnd.length;
+	const eol = markdown.includes('\r\n') ? '\r\n' : '\n';
+	const generated = renderRepositoryFacts(repositoryFacts).replaceAll('\n', eol);
+	const revisionLine = `mappingRevisionHash: ${JSON.stringify(repositoryFactsRevisionHash(repositoryFacts))}`;
+	let updated = markdown.slice(0, startIndex) + generated + markdown.slice(endIndex);
+	if (/^mappingRevisionHash: [^\r\n]+/mu.test(updated)) {
+		updated = updated.replace(/^mappingRevisionHash: [^\r\n]+/mu, revisionLine);
+	} else {
+		updated = updated.replace(
+			/^(editableEnglishHash: [^\r\n]+)(\r?\n)/mu,
+			`$1${eol}${revisionLine}$2`,
+		);
+	}
+	parseEnglishDocument(updated);
+	return updated;
+}
+
 export function renderInterpretation(input: RenderInterpretationInput): string {
 	const { result } = input;
 	const repositoryFacts = input.repositoryFacts ?? {
@@ -230,23 +289,7 @@ export function renderInterpretation(input: RenderInterpretationInput): string {
 		'',
 		behavior,
 		'',
-		'<!-- langclarity:generated:start relationships -->',
-		'## Key definitions',
-		'',
-		renderVerifiedList(repositoryFacts.keyDefinitions),
-		'',
-		'## Dependencies',
-		'',
-		renderVerifiedList(repositoryFacts.dependencies),
-		'',
-		'## Related files',
-		'',
-		renderVerifiedList(repositoryFacts.relatedFiles),
-		'',
-		'## Related tests',
-		'',
-		renderVerifiedList(repositoryFacts.relatedTests),
-		'<!-- langclarity:generated:end relationships -->',
+		renderRepositoryFacts(repositoryFacts),
 		'',
 		'## Side effects',
 		'',
@@ -262,7 +305,7 @@ export function renderInterpretation(input: RenderInterpretationInput): string {
 		source: input.sourcePath,
 		sourceHash: input.sourceHash,
 		editableEnglishHash: hashEditableBody(body),
-		mappingRevisionHash: hashText(JSON.stringify(repositoryFacts)),
+		mappingRevisionHash: repositoryFactsRevisionHash(repositoryFacts),
 		languageId: input.languageId,
 		promptVersion: '7',
 		model: input.model,

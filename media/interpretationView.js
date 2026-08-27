@@ -13,6 +13,7 @@ function updateEditorPosition() { const input = byId('behavior-text'); const pos
 function lineOffset(value, lineIndex) { const newline = String.fromCharCode(10); let offset = 0; for (let index = 0; index < lineIndex; index += 1) { const next = value.indexOf(newline, offset); if (next < 0) return value.length; offset = next + 1; } return offset; }
 function replaceText(input, start, end, replacement, selectionMode) { input.setRangeText(replacement, start, end, selectionMode || 'end'); input.dispatchEvent(new Event('input', { bubbles: true })); }
 function setStatus(status) { const labels = { SYNCED: 'Synced', CODE_CHANGED: 'Code changed', ENGLISH_CHANGED: 'English changed', BOTH_CHANGED: 'Both changed' }; byId('status').textContent = labels[status] || status; showSuggestedAction(status); }
+function setRepositoryContextStatus(status) { const labels = { CURRENT: 'Repository context: Current', STALE: 'Repository context: Out of date' }; const badge = byId('repository-context-status'); badge.textContent = labels[status] || 'Repository context: Unavailable'; badge.dataset.state = status; byId('refresh-repository-context').hidden = status !== 'STALE'; }
 function showSuggestedAction(status) {
 	const actions = {
 		CODE_CHANGED: { label: 'Apply Code → English', command: 'langclarity.codeToEnglish' },
@@ -46,16 +47,17 @@ document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click',
 document.querySelectorAll('[data-command]').forEach((button) => button.addEventListener('click', () => flush('command', button.dataset.command)));
 byId('suggested-action').addEventListener('click', (event) => flush('command', event.currentTarget.dataset.suggestedCommand));
 byId('save').addEventListener('click', () => flush('save'));
+byId('refresh-repository-context').addEventListener('click', () => flush('refreshRepositoryContext'));
 byId('behavior-text').addEventListener('input', (event) => { const lines = event.target.value.split(String.fromCharCode(10)); const needsPadding = lines.length < sourceLineCount; while (lines.length < sourceLineCount) lines.push(''); behavior = lines.map((statement, index) => exactRow(statement, index)); if (needsPadding) event.target.value = behavior.map((item) => singleLine(item.statement)).join(String.fromCharCode(10)); syncEditorRows(); renderGutter(); updateEditorPosition(); scheduleUpdate(); });
 byId('behavior-text').addEventListener('keydown', (event) => { if (event.key !== 'Tab') return; event.preventDefault(); const input = event.target; if (input.selectionStart !== input.selectionEnd) { const start = lineOffset(input.value, editorPosition({ value: input.value, selectionStart: input.selectionStart }).line - 1); const newline = String.fromCharCode(10); const selected = input.value.slice(start, input.selectionEnd); const replacement = selected.split(newline).map((line) => event.shiftKey ? (line.startsWith('  ') ? line.slice(2) : line.startsWith(' ') ? line.slice(1) : line) : '  ' + line).join(newline); replaceText(input, start, input.selectionEnd, replacement, 'select'); } else if (event.shiftKey) { const start = lineOffset(input.value, editorPosition(input).line - 1); const removable = input.value.slice(start, input.selectionStart).endsWith('  ') ? 2 : input.value.slice(start, input.selectionStart).endsWith(' ') ? 1 : 0; if (removable > 0) replaceText(input, input.selectionStart - removable, input.selectionStart, '', 'end'); } else { replaceText(input, input.selectionStart, input.selectionEnd, '  ', 'end'); } });
 ['click', 'keyup', 'select'].forEach((name) => byId('behavior-text').addEventListener(name, updateEditorPosition));
 document.addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); flush('save'); } });
 window.addEventListener('message', (event) => {
 	const message = event.data;
-	if (message.type === 'content') { const content = message.content; sourceLineCount = Math.max(1, content.sourceLineCount); behavior = content.behavior; loaded = true; byId('source').textContent = content.source; byId('meta').textContent = 'Model: ' + content.model + ' · Interpreted ' + new Date(content.interpretedAt).toLocaleString(); setStatus(content.status); renderBehavior(); renderReadonly('overview', content.overview); renderReadonly('structure', content.structure); renderReadonly('effects', content.effects); byId('error').hidden = true; }
-	if (message.type === 'status') { setStatus(message.status); }
+	if (message.type === 'content') { const content = message.content; sourceLineCount = Math.max(1, content.sourceLineCount); behavior = content.behavior; loaded = true; byId('source').textContent = content.source; byId('meta').textContent = 'Model: ' + content.model + ' · Interpreted ' + new Date(content.interpretedAt).toLocaleString(); setStatus(content.status); setRepositoryContextStatus(content.repositoryContextStatus); renderBehavior(); renderReadonly('overview', content.overview); renderReadonly('structure', content.structure); renderReadonly('effects', content.effects); byId('error').hidden = true; }
+	if (message.type === 'status') { setStatus(message.status); setRepositoryContextStatus(message.repositoryContextStatus); }
 	if (message.type === 'error') { byId('suggested-action').hidden = true; byId('error').textContent = message.message; byId('error').hidden = false; }
 	if (message.type === 'saved') { byId('save-state').textContent = message.saved ? 'Saved' : 'Edited'; }
-	if (message.type === 'documentSaved') { setStatus(message.status); }
+	if (message.type === 'documentSaved') { setStatus(message.status); setRepositoryContextStatus(message.repositoryContextStatus); }
 });
 vscode.postMessage({ type: 'ready' });
