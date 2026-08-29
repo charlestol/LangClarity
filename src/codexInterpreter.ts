@@ -12,6 +12,7 @@ import {
 	MAX_SOURCE_BYTES,
 	MAX_SOURCE_LINES,
 	numberedSource,
+	sourceLimitError,
 	type InterpretationResult,
 	validateInterpretation,
 } from './interpretation';
@@ -27,7 +28,6 @@ const MINIMUM_CODEX_VERSION = '0.148.0-alpha.15';
 const MAX_PROTOCOL_LINE_BYTES = 2 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const TURN_TIMEOUT_MS = 180_000;
-const MAX_CODE_TO_ENGLISH_TURN_TIMEOUT_MS = 15 * 60_000;
 const VERSION_CHECK_TIMEOUT_MS = 15_000;
 const MAX_NOTIFICATIONS = 10_000;
 const MAX_WARM_CLIENTS = 2;
@@ -38,13 +38,6 @@ export const CODEX_NOTIFICATION_OPT_OUTS = [
 	'item/reasoning/textDelta',
 	'item/reasoning/summaryTextDelta',
 ] as const;
-
-export function codeToEnglishTurnTimeoutMs(sourceLineCount: number): number {
-	return Math.max(
-		TURN_TIMEOUT_MS,
-		Math.ceil(MAX_CODE_TO_ENGLISH_TURN_TIMEOUT_MS * sourceLineCount / MAX_SOURCE_LINES),
-	);
-}
 
 const supportedVersionChecks = new Map<string, Promise<void>>();
 const DISABLED_CODEX_FEATURES = [
@@ -176,7 +169,6 @@ export class CodexInterpreter {
 		const output = await this.runStructuredTurn({
 			prompt: buildCodeToEnglishPrompt(input.source, input.sourcePath, input.languageId),
 			schema: codeToEnglishSchema(sourceLineCount),
-			turnTimeoutMs: codeToEnglishTurnTimeoutMs(sourceLineCount),
 			preferMedium: true,
 			cancellationToken: input.cancellationToken,
 			onRetry: input.onRetry,
@@ -224,7 +216,6 @@ export class CodexInterpreter {
 	private async runStructuredTurn(input: {
 		prompt: string;
 		schema: unknown;
-		turnTimeoutMs?: number;
 		preferMedium: boolean;
 		cancellationToken: vscode.CancellationToken;
 		onRetry?: (message: string) => void;
@@ -265,7 +256,6 @@ export class CodexInterpreter {
 				schema: input.schema,
 				model: thread.model,
 				effort: resolved?.reasoningEffort,
-				timeoutMs: input.turnTimeoutMs,
 				cancellationToken: input.cancellationToken,
 				onRetry: input.onRetry,
 			});
@@ -575,8 +565,9 @@ async function readVisibleModels(client: AppServerClient): Promise<CodexModel[]>
 }
 
 function assertBoundedSource(source: string): void {
-	if (Buffer.byteLength(source, 'utf8') > MAX_SOURCE_BYTES || lineCount(source) > MAX_SOURCE_LINES) {
-		throw new Error('The current source exceeds the LangClarity MVP limit of 75 KiB or 2,000 lines.');
+	const error = sourceLimitError(source);
+	if (error) {
+		throw new Error(error);
 	}
 }
 
@@ -917,7 +908,6 @@ class AppServerClient {
 		schema: unknown;
 		model: string;
 		effort?: string;
-		timeoutMs?: number;
 		cancellationToken: vscode.CancellationToken;
 		onRetry?: (message: string) => void;
 	}): Promise<string> {
@@ -967,7 +957,7 @@ class AppServerClient {
 			const completed = await this.waitFor(
 				(notification) => notification.method === 'turn/completed'
 					&& turnIdFrom(notification) === turnId,
-				input.timeoutMs ?? TURN_TIMEOUT_MS,
+				TURN_TIMEOUT_MS,
 			);
 			const turn = completed.params?.turn as { status?: string; error?: unknown } | undefined;
 			if (turn?.status === 'interrupted' || input.cancellationToken.isCancellationRequested) {

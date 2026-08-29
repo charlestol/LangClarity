@@ -166,14 +166,23 @@ export function sourceEligibilityError(document: vscode.TextDocument): string | 
 		return accessError;
 	}
 
-	const text = document.getText();
-	if (Buffer.byteLength(text, 'utf8') > MAX_SOURCE_BYTES) {
-		return 'This file exceeds the LangClarity MVP limit of 75 KiB.';
+	return sourceLimitError(document.getText());
+}
+
+export function sourceLimitError(text: string): string | undefined {
+	const byteLength = Buffer.byteLength(text, 'utf8');
+	const sourceLineCount = lineCount(text);
+	const violations: string[] = [];
+	if (byteLength > MAX_SOURCE_BYTES) {
+		violations.push(`${byteLength.toLocaleString('en-US')} bytes (maximum ${MAX_SOURCE_BYTES.toLocaleString('en-US')} bytes / 75 KiB)`);
 	}
-	if (lineCount(text) > MAX_SOURCE_LINES) {
-		return 'This file exceeds the LangClarity MVP limit of 2,000 lines.';
+	if (sourceLineCount > MAX_SOURCE_LINES) {
+		violations.push(`${sourceLineCount.toLocaleString('en-US')} lines (maximum ${MAX_SOURCE_LINES.toLocaleString('en-US')})`);
 	}
-	return undefined;
+	if (violations.length === 0) {
+		return undefined;
+	}
+	return `LangClarity cannot interpret this file because it exceeds the source limit: ${violations.join(' and ')}. Reduce or split the file, then try again.`;
 }
 
 export function lineCount(text: string): number {

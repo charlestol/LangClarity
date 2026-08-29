@@ -117,7 +117,7 @@ The first live response also proved that schema-valid output can still be semant
 - Maximum English document: 256 KiB.
 - Repository facts: direct imports only; `relatedTests` is always empty.
 - Concurrency: one request per file, two globally.
-- Protocol request timeout: 30 seconds (`REQUEST_TIMEOUT_MS`); ordinary turns time out after 180 seconds, while code-to-English turns scale with source length up to 15 minutes at 2,000 lines. No user-facing slow notice.
+- Protocol request timeout: 30 seconds (`REQUEST_TIMEOUT_MS`); all turns time out after 180 seconds. No user-facing slow notice.
 - Maximum protocol message line: 2 MiB.
 
 These are code defaults for the POC, not user settings, and can change after measurement.

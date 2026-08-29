@@ -5,10 +5,8 @@ import {
 	UsageLimitedError,
 } from './codexInterpreter';
 import {
-	lineCount,
 	MAX_ENGLISH_BYTES,
-	MAX_SOURCE_BYTES,
-	MAX_SOURCE_LINES,
+	sourceLimitError,
 } from './interpretation';
 import { operationStartError } from './operationPolicy';
 
@@ -21,11 +19,9 @@ export async function requireTrustedWorkspace(message: string): Promise<boolean>
 }
 
 export async function ensureSourceWithinLimits(sourceText: string): Promise<boolean> {
-	if (Buffer.byteLength(sourceText, 'utf8') > MAX_SOURCE_BYTES
-		|| lineCount(sourceText) > MAX_SOURCE_LINES) {
-		await vscode.window.showErrorMessage(
-			'The current source exceeds the LangClarity MVP limit of 75 KiB or 2,000 lines.',
-		);
+	const error = sourceLimitError(sourceText);
+	if (error) {
+		await vscode.window.showErrorMessage(error);
 		return false;
 	}
 	return true;
